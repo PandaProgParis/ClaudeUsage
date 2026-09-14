@@ -19,14 +19,14 @@ describe('resolveConfig', () => {
     for (const raw of [null, undefined, 'nope', 42, []]) {
       const cfg = resolveConfig(raw, HOME)
       expect(cfg.intervalMinutes).toBe(5)
-      expect(cfg.outputPath).toBe('C:/Users/tester/.claude-cockpit/usage-live.json')
+      expect(cfg.outputPath).toBe('C:/Users/tester/.claude-usage/usage.json')
       expect(cfg.endpoint).toBe('')
     }
   })
 
   it('carries a valid endpoint through, and drops an invalid one', () => {
-    expect(resolveConfig({ endpoint: 'http://localhost:6601/api/usage/inject' }, HOME).endpoint)
-      .toBe('http://localhost:6601/api/usage/inject')
+    expect(resolveConfig({ endpoint: 'http://localhost:8080/usage' }, HOME).endpoint)
+      .toBe('http://localhost:8080/usage')
     expect(resolveConfig({ endpoint: 'nope' }, HOME).endpoint).toBe('')
   })
 
@@ -98,15 +98,15 @@ describe('i18n', () => {
 
 describe('resolveEndpoint', () => {
   it('keeps http and https URLs, trimmed', () => {
-    expect(resolveEndpoint(' http://localhost:6601/api/usage/inject '))
-      .toBe('http://localhost:6601/api/usage/inject')
+    expect(resolveEndpoint(' http://localhost:8080/usage '))
+      .toBe('http://localhost:8080/usage')
     expect(resolveEndpoint('https://example.com/hook')).toBe('https://example.com/hook')
   })
 
   it('drops anything that is not an http(s) URL', () => {
     expect(resolveEndpoint('file:///etc/passwd')).toBe('')
     expect(resolveEndpoint('javascript:alert(1)')).toBe('')
-    expect(resolveEndpoint('localhost:6601')).toBe('')
+    expect(resolveEndpoint('localhost:8080')).toBe('')
     expect(resolveEndpoint('pas une url')).toBe('')
   })
 

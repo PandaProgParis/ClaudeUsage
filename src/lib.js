@@ -2,7 +2,7 @@
 // Everything here is unit-tested in __tests__/lib.test.js.
 
 const DEFAULT_CONFIG = {
-  outputPath: '~/.claude-cockpit/usage-live.json',
+  outputPath: '~/.claude-usage/usage.json',
   intervalMinutes: 5,
   endpoint: '', // empty = write the file only, post nothing
 }
@@ -77,8 +77,8 @@ function isAuthFailure(status) {
 }
 
 /**
- * Same shape check the Cockpit server applies in POST /api/usage/inject —
- * keeps us from overwriting a good file with an error page or an empty body.
+ * Sanity check before writing: keeps us from overwriting a good file with an
+ * error page or an empty body.
  */
 function hasUsageShape(payload) {
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return false

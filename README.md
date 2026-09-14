@@ -25,7 +25,7 @@ Every few minutes, quietly in the background:
 
 Click the tray icon and you get your gauges — session, weekly, per-model — without opening a browser.
 
-It is a standalone rewrite of the Chrome extension that ships with [Claude Agents](https://github.com/PandaProgParis/ClaudeAgents), with no browser required.
+It is the account-side companion to [Claude Agents](https://github.com/PandaProgParis/ClaudeAgents), the VS Code extension that shows the Claude Code sessions running on your machine: Agents watches what your sessions do, claude-usage watches what they cost you in quota.
 
 ## Install
 
@@ -115,7 +115,7 @@ Anthropic changes this payload from time to time; the agent stores it verbatim r
 
 ```json
 {
-  "outputPath": "~/.claude-cockpit/usage-live.json",
+  "outputPath": "~/.claude-usage/usage.json",
   "intervalMinutes": 5,
   "endpoint": ""
 }
@@ -125,7 +125,7 @@ Anthropic changes this payload from time to time; the agent stores it verbatim r
 |---|---|
 | `outputPath` | Where to write the JSON. A leading `~` expands to your home directory. |
 | `intervalMinutes` | How often to take a reading. Clamped to 1–1440. |
-| `endpoint` | Optional `http(s)` URL to POST the payload to after each write. Empty disables it. Point it at `http://localhost:6601/api/usage/inject` to feed Claude Agents. |
+| `endpoint` | Optional `http(s)` URL to `POST` the payload to after each write — a dashboard, a webhook, your own API. Empty disables it. |
 
 **The file is reloaded live** — save it and the new path, interval and endpoint apply immediately, with a reading straight away. Invalid JSON is ignored and logged rather than allowed to reset your settings.
 
