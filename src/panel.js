@@ -1,17 +1,18 @@
 // Tray panel renderer. Gauges arrive already computed from main.js (lib.js
 // owns that logic), so this file only paints and forwards clicks.
 
-const subtitle = document.getElementById('subtitle')
+const headline = document.getElementById('headline')
 const gaugeList = document.getElementById('gauge-list')
 const statusBar = document.getElementById('status')
 const statusText = document.getElementById('status-text')
-const outputPath = document.getElementById('output-path')
 const delivery = document.getElementById('delivery')
 const deliveryText = document.getElementById('delivery-text')
-const gaugesTitle = document.getElementById('gauges-title')
-const syncLabel = document.getElementById('sync-label')
+const syncBtn = document.getElementById('sync-btn')
+const settingsBtn = document.getElementById('settings-btn')
+const minimizeBtn = document.getElementById('minimize-btn')
+const loginBtn = document.getElementById('login-btn')
 const loginLabel = document.getElementById('login-label')
-const configBtn = document.getElementById('config-btn')
+const logoutBtn = document.getElementById('logout-btn')
 const quitBtn = document.getElementById('quit-btn')
 
 function escapeHtml(text) {
@@ -67,31 +68,40 @@ function render(state) {
 
   const labels = state.labels || {}
 
-  subtitle.textContent = labels.subtitle || ''
-  gaugesTitle.textContent = labels.usage || ''
-  syncLabel.textContent = labels.sync || ''
+  headline.textContent = state.headline || ''
+  syncBtn.title = labels.sync || ''
+  settingsBtn.title = labels.settings || ''
+  minimizeBtn.title = labels.minimize || ''
   loginLabel.textContent = labels.relogin || ''
-  configBtn.textContent = labels.config || ''
+  logoutBtn.textContent = labels.logout || ''
   quitBtn.textContent = labels.quit || ''
-  outputPath.title = labels.openFolder || ''
 
+  syncBtn.classList.toggle('spinning', state.status === 'syncing')
+
+  // The card's top line already says when the last reading was, and the spinner says
+  // one is in progress; the pill and the reconnect button only earn their
+  // place when something needs the user.
+  const needsUser = state.status === 'error' || state.status === 'login'
+  statusBar.hidden = !needsUser
+  loginBtn.hidden = !needsUser
   statusBar.className = 'status-bar ' + state.status
   statusText.textContent = state.message
-  outputPath.textContent = state.outputPath
+
   renderGauges(state.gauges, labels)
   renderDelivery(state)
 
-  // The panel sizes itself to its content; main.js repositions it afterwards.
+  // The panel sizes itself to its content; main.js resizes the window in place.
   requestAnimationFrame(() => {
-    window.agent.reportHeight(document.body.scrollHeight)
+    window.agent.reportHeight(document.body.offsetHeight)
   })
 }
 
-document.getElementById('sync-btn').addEventListener('click', () => window.agent.sync())
-document.getElementById('login-btn').addEventListener('click', () => window.agent.relogin())
-document.getElementById('config-btn').addEventListener('click', () => window.agent.openConfig())
-document.getElementById('quit-btn').addEventListener('click', () => window.agent.quit())
-outputPath.addEventListener('click', () => window.agent.openJson())
+syncBtn.addEventListener('click', () => window.agent.sync())
+settingsBtn.addEventListener('click', () => window.agent.openSettings())
+minimizeBtn.addEventListener('click', () => window.agent.hide())
+loginBtn.addEventListener('click', () => window.agent.relogin())
+logoutBtn.addEventListener('click', () => window.agent.logout())
+quitBtn.addEventListener('click', () => window.agent.quit())
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') window.agent.hide()

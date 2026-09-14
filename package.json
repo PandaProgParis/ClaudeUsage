@@ -1,7 +1,7 @@
 {
   "name": "claude-usage",
   "productName": "claude-usage",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Background tray agent that snapshots your claude.ai usage limits to a JSON file",
   "main": "src/main.js",
   "license": "MIT",

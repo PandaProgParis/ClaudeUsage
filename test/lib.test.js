@@ -5,6 +5,7 @@ import {
   createTranslator,
   resolveConfig,
   resolveEndpoint,
+  configProblems,
   pickOrganization,
   isAuthFailure,
   hasUsageShape,
@@ -41,6 +42,12 @@ describe('resolveConfig', () => {
       .toBe('D:/data/usage.json')
   })
 
+  it('keeps the path as written, so a ~ can be handed back to the settings form', () => {
+    expect(resolveConfig({ outputPath: ' ~/usage.json ' }, HOME).outputPathRaw).toBe('~/usage.json')
+    expect(resolveConfig(null, HOME).outputPathRaw).toBe('~/.claude-usage/usage.json')
+    expect(resolveConfig({ outputPath: '' }, HOME).outputPathRaw).toBe('~/.claude-usage/usage.json')
+  })
+
   it('does not expand a ~ that is not a home prefix', () => {
     expect(resolveConfig({ outputPath: 'D:/~backup/usage.json' }, HOME).outputPath)
       .toBe('D:/~backup/usage.json')
@@ -53,6 +60,51 @@ describe('resolveConfig', () => {
     expect(resolveConfig({ intervalMinutes: 0.4 }, HOME).intervalMinutes).toBe(1)
     expect(resolveConfig({ intervalMinutes: 99999 }, HOME).intervalMinutes).toBe(1440)
     expect(resolveConfig({ intervalMinutes: 15 }, HOME).intervalMinutes).toBe(15)
+  })
+})
+
+describe('configProblems', () => {
+  const good = { endpoint: 'https://example.com/hook', intervalMinutes: '15', outputPath: '~/usage.json' }
+
+  it('accepts a complete form, with or without an endpoint', () => {
+    expect(configProblems(good)).toEqual([])
+    expect(configProblems({ ...good, endpoint: '' })).toEqual([])
+    expect(configProblems({ ...good, endpoint: '   ' })).toEqual([])
+    expect(configProblems({ ...good, intervalMinutes: 5 })).toEqual([])
+  })
+
+  it('refuses an endpoint that is not an http(s) URL instead of dropping it', () => {
+    expect(configProblems({ ...good, endpoint: 'localhost:8080' })).toEqual(['endpoint'])
+    expect(configProblems({ ...good, endpoint: 'ftp://example.com' })).toEqual(['endpoint'])
+    expect(configProblems({ ...good, endpoint: 'pas une url' })).toEqual(['endpoint'])
+  })
+
+  it('refuses a non-string endpoint, but tolerates an absent one', () => {
+    expect(configProblems({ ...good, endpoint: 42 })).toEqual(['endpoint'])
+    expect(configProblems({ ...good, endpoint: true })).toEqual(['endpoint'])
+    expect(configProblems({ ...good, endpoint: null })).toEqual([])
+    expect(configProblems({ ...good, endpoint: undefined })).toEqual([])
+  })
+
+  it('refuses an interval outside 1..1440 instead of clamping it', () => {
+    for (const bad of ['0', '1441', '-5', 'abc', '', '  ', null, undefined, true]) {
+      expect(configProblems({ ...good, intervalMinutes: bad }), String(bad)).toEqual(['intervalMinutes'])
+    }
+    expect(configProblems({ ...good, intervalMinutes: '1' })).toEqual([])
+    expect(configProblems({ ...good, intervalMinutes: '1440' })).toEqual([])
+  })
+
+  it('requires an output path', () => {
+    expect(configProblems({ ...good, outputPath: '' })).toEqual(['outputPath'])
+    expect(configProblems({ ...good, outputPath: '   ' })).toEqual(['outputPath'])
+    expect(configProblems({ ...good, outputPath: 42 })).toEqual(['outputPath'])
+  })
+
+  it('reports every problem at once, and survives garbage input', () => {
+    expect(configProblems({ endpoint: 'nope', intervalMinutes: 'x', outputPath: '' }))
+      .toEqual(['endpoint', 'intervalMinutes', 'outputPath'])
+    expect(configProblems(null)).toEqual(['intervalMinutes', 'outputPath'])
+    expect(configProblems('garbage')).toEqual(['intervalMinutes', 'outputPath'])
   })
 })
 
@@ -186,6 +238,13 @@ describe('formatResetTime', () => {
     expect(formatResetTime('2026-09-12T13:05:00Z', now)).toBe('3h05')
   })
 
+  it('switches to days and hours from 24 hours on, in the panel language', () => {
+    expect(formatResetTime('2026-09-18T09:06:00Z', now)).toBe('5d 23h')
+    expect(formatResetTime('2026-09-18T09:06:00Z', now, 'fr')).toBe('5j 23h')
+    expect(formatResetTime('2026-09-15T10:20:00Z', now, 'fr')).toBe('3j')
+    expect(formatResetTime('2026-09-13T09:59:00Z', now)).toBe('23h59')
+  })
+
   it('says now for a reset in the past', () => {
     expect(formatResetTime('2026-09-12T09:00:00Z', now)).toBe('now')
   })
@@ -235,6 +294,11 @@ describe('buildGauges', () => {
       limits: [{ kind: 'session', percent: 10, resets_at: null }],
     }, now)
     expect(gauges[0].percent).toBe(90)
+  })
+
+  it('words resets in the given language', () => {
+    const gauges = buildGauges({ limits: [{ kind: 'weekly_all', percent: 8, resets_at: '2026-09-14T12:00:00Z' }] }, now, 'fr')
+    expect(gauges[0].reset).toBe('2j 2h')
   })
 
   it('clamps percentages into 0..100', () => {

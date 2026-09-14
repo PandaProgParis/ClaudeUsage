@@ -1,5 +1,5 @@
 // Pure logic for the claude-usage agent — no Electron, no fs, no network.
-// Everything here is unit-tested in __tests__/lib.test.js.
+// Everything here is unit-tested in test/lib.test.js.
 
 const DEFAULT_CONFIG = {
   outputPath: '~/.claude-usage/usage.json',
@@ -31,7 +31,12 @@ function resolveEndpoint(value) {
   }
 }
 
-/** Merge a raw config.json with the defaults, clamping anything out of range. */
+/**
+ * Merge a raw config.json with the defaults, clamping anything out of range.
+ * `outputPathRaw` is the path as written (a `~` kept), so the settings window
+ * can hand it back unchanged instead of freezing the expanded absolute path
+ * into the file.
+ */
 function resolveConfig(raw, homedir) {
   const source = raw && typeof raw === 'object' ? raw : {}
 
@@ -46,9 +51,39 @@ function resolveConfig(raw, homedir) {
 
   return {
     outputPath: expandHome(rawPath, homedir),
+    outputPathRaw: rawPath,
     intervalMinutes,
     endpoint: resolveEndpoint(source.endpoint),
   }
+}
+
+/**
+ * What the settings window must refuse before resolveConfig papers over it:
+ * resolveConfig silently drops a bad endpoint and clamps a bad interval, which
+ * is right for a hand-edited file and wrong for a form. Returns the names of
+ * the offending fields, empty when everything is acceptable.
+ */
+function configProblems(raw) {
+  const source = raw && typeof raw === 'object' ? raw : {}
+  const problems = []
+
+  // Absent means "no upload"; anything else must be a string, and a non-empty
+  // one must be an http(s) URL — the same rule as outputPath below.
+  if (source.endpoint != null && typeof source.endpoint !== 'string') {
+    problems.push('endpoint')
+  } else if (typeof source.endpoint === 'string' && source.endpoint.trim() && !resolveEndpoint(source.endpoint)) {
+    problems.push('endpoint')
+  }
+
+  const rawInterval = source.intervalMinutes
+  const interval = typeof rawInterval === 'number'
+    ? rawInterval
+    : typeof rawInterval === 'string' && rawInterval.trim() ? Number(rawInterval) : NaN
+  if (!Number.isFinite(interval) || interval < 1 || interval > 1440) problems.push('intervalMinutes')
+
+  if (typeof source.outputPath !== 'string' || !source.outputPath.trim()) problems.push('outputPath')
+
+  return problems
 }
 
 /**
@@ -140,8 +175,10 @@ function scopedGauges(payload) {
     .filter(Boolean)
 }
 
-/** Human-readable countdown until a reset timestamp. */
-function formatResetTime(isoDate, now = Date.now()) {
+const DAY_UNIT = { en: 'd', fr: 'j' }
+
+/** Human-readable countdown until a reset timestamp; days from 24 h on ("143h06" reads badly). */
+function formatResetTime(isoDate, now = Date.now(), language = 'en') {
   if (!isoDate) return ''
   const target = new Date(isoDate).getTime()
   if (!Number.isFinite(target)) return ''
@@ -151,14 +188,16 @@ function formatResetTime(isoDate, now = Date.now()) {
   if (mins < 60) return `${mins}min`
   const h = Math.floor(mins / 60)
   const m = mins % 60
-  return `${h}h${String(m).padStart(2, '0')}`
+  if (h < 24) return `${h}h${String(m).padStart(2, '0')}`
+  const days = `${Math.floor(h / 24)}${DAY_UNIT[language] || DAY_UNIT.en}`
+  return h % 24 ? `${days} ${h % 24}h` : days
 }
 
 /**
  * Flatten a usage payload into render-ready gauges, so the panel renderer
  * stays a dumb view over this list.
  */
-function buildGauges(payload, now = Date.now()) {
+function buildGauges(payload, now = Date.now(), language = 'en') {
   if (!payload || typeof payload !== 'object') return []
 
   return GAUGE_CONFIG
@@ -174,7 +213,7 @@ function buildGauges(payload, now = Date.now()) {
       label: g.label,
       color: g.color,
       percent: Math.min(Math.max(Math.round(g.data.utilization), 0), 100),
-      reset: formatResetTime(g.data.resets_at, now),
+      reset: formatResetTime(g.data.resets_at, now, language),
     }))
 }
 
@@ -198,6 +237,8 @@ const MESSAGES = {
     sent: 'Sent',
     sendFailed: 'Send failed: {error}',
     unreachable: 'claude.ai unreachable',
+    fetchTimeout: '{path} did not answer in time',
+    fetchFailed: '{path} unreachable ({error})',
     orgsResponded: '/api/organizations answered {status}',
     noOrg: 'no organization on this account',
     usageResponded: '/usage answered {status} with no usable data',
@@ -210,16 +251,31 @@ const MESSAGES = {
     trayOpenLog: 'Open the log',
     trayAutostart: 'Start at login',
     trayQuit: 'Quit',
-    panelSubtitle: 'Every {minutes} min',
-    panelUsage: 'Usage',
+    traySettings: 'Settings…',
+    trayLogout: 'Log out',
+    loggedOut: 'Logged out — reconnect to resume readings',
     panelEmpty: 'No reading yet',
-    panelSync: 'Sync',
+    panelSync: 'Sync now',
+    panelSettings: 'Settings',
+    panelMinimize: 'Minimize',
     panelRelogin: 'Log in again',
-    panelConfig: 'Config',
+    panelLogout: 'Log out',
     panelQuit: 'Quit',
-    panelOpenFolder: 'Open the folder',
     panelPending: 'pending',
     panelReset: 'reset {time}',
+    configWindowTitle: 'claude-usage — settings',
+    configEndpoint: 'Upload URL',
+    configEndpointHint: 'The JSON is POSTed to this http(s) address after each reading. Empty: write the file only.',
+    configInterval: 'Interval (minutes)',
+    configIntervalHint: 'Between 1 and 1440.',
+    configOutputPath: 'Output file',
+    configOutputPathHint: 'Where the JSON is written. A leading ~ is your home folder.',
+    configSave: 'Save',
+    configCancel: 'Cancel',
+    configInvalidEndpoint: 'Must be an http:// or https:// URL',
+    configInvalidInterval: 'Must be a number between 1 and 1440',
+    configInvalidPath: 'A file path is required',
+    configWriteFailed: 'Could not write the config: {error}',
   },
   fr: {
     noReading: 'Aucun relevé',
@@ -234,6 +290,8 @@ const MESSAGES = {
     sent: 'Envoyé',
     sendFailed: 'Envoi échoué : {error}',
     unreachable: 'claude.ai injoignable',
+    fetchTimeout: '{path} n’a pas répondu à temps',
+    fetchFailed: '{path} injoignable ({error})',
     orgsResponded: '/api/organizations a répondu {status}',
     noOrg: 'aucune organisation sur ce compte',
     usageResponded: '/usage a répondu {status} sans données exploitables',
@@ -246,16 +304,31 @@ const MESSAGES = {
     trayOpenLog: 'Ouvrir le log',
     trayAutostart: 'Lancer au démarrage',
     trayQuit: 'Quitter',
-    panelSubtitle: 'Toutes les {minutes} min',
-    panelUsage: 'Usage',
+    traySettings: 'Paramètres…',
+    trayLogout: 'Déconnecter le compte',
+    loggedOut: 'Compte déconnecté — reconnecte-toi pour reprendre les relevés',
     panelEmpty: 'Pas encore de relevé',
-    panelSync: 'Relever',
+    panelSync: 'Relever maintenant',
+    panelSettings: 'Paramètres',
+    panelMinimize: 'Réduire',
     panelRelogin: 'Se reconnecter',
-    panelConfig: 'Config',
+    panelLogout: 'Déconnecter le compte',
     panelQuit: 'Quitter',
-    panelOpenFolder: 'Ouvrir le dossier',
     panelPending: 'en attente',
     panelReset: 'reset {time}',
+    configWindowTitle: 'claude-usage — paramètres',
+    configEndpoint: 'URL d’envoi',
+    configEndpointHint: 'Le JSON est envoyé en POST à cette adresse http(s) après chaque relevé. Vide : le fichier seulement.',
+    configInterval: 'Intervalle (minutes)',
+    configIntervalHint: 'Entre 1 et 1440.',
+    configOutputPath: 'Fichier de sortie',
+    configOutputPathHint: 'Où écrire le JSON. Un ~ en tête désigne ton dossier personnel.',
+    configSave: 'Enregistrer',
+    configCancel: 'Annuler',
+    configInvalidEndpoint: 'Doit être une URL http:// ou https://',
+    configInvalidInterval: 'Doit être un nombre entre 1 et 1440',
+    configInvalidPath: 'Un chemin de fichier est requis',
+    configWriteFailed: 'Écriture de la config impossible : {error}',
   },
 }
 
@@ -287,6 +360,7 @@ module.exports = {
   DEFAULT_CONFIG,
   resolveConfig,
   resolveEndpoint,
+  configProblems,
   pickOrganization,
   isAuthFailure,
   hasUsageShape,

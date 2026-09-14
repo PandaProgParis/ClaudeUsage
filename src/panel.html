@@ -11,77 +11,96 @@
 
     html, body { overflow: hidden; }
 
+    /* Author display rules below would otherwise beat the browser's own [hidden] rule. */
+    [hidden] { display: none !important; }
+
     body {
       width: 320px;
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
       font-size: 13px;
       color: #1a1a1a;
-      background: #faf9f7;
+      background: #fff;
       border: 1px solid #e5e2de;
       border-radius: 10px;
       user-select: none;
+      /* Frameless window: the whole panel is a drag handle, except its controls. */
+      -webkit-app-region: drag;
     }
 
-    /* Header */
-    .header {
+    button { -webkit-app-region: no-drag; }
+
+    /* Top line of the card: last reading on the left, controls on the right */
+    .card-head {
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 10px 14px 8px;
-      border-bottom: 1px solid #ebe8e4;
+      justify-content: space-between;
+      gap: 8px;
+      margin: -3px -5px -2px 0;
     }
 
-    .header-icon {
-      width: 24px;
-      height: 24px;
-      background: #d97757;
-      border-radius: 8px;
+    .headline {
+      font-size: 10.5px;
+      color: #8b8580;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .header-actions {
       display: flex;
       align-items: center;
-      justify-content: center;
+      gap: 0;
       flex-shrink: 0;
     }
 
-    .header-icon svg { width: 14px; height: 14px; fill: #fff; }
-
-    .header-text { display: flex; flex-direction: column; gap: 1px; }
-
-    .header-title {
-      font-size: 14px;
-      font-weight: 600;
-      letter-spacing: -0.01em;
+    .icon-btn {
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      border-radius: 5px;
+      background: none;
+      color: #b0aca6;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
     }
 
-    .header-subtitle { font-size: 11px; color: #8b8580; }
+    .icon-btn:hover { background: #f0eeeb; color: #1a1a1a; }
+    .icon-btn.danger:hover { color: #d94444; }
+
+    .icon-btn svg {
+      width: 12px;
+      height: 12px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .icon-btn.spinning { color: #d97757; }
+    .icon-btn.spinning svg { animation: spin 1s linear infinite; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     /* Content */
     .content {
-      padding: 10px 14px 12px;
+      padding: 7px 10px 6px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 5px;
     }
 
     /* Gauges */
-    .gauges {
+    #gauge-list {
       display: flex;
       flex-direction: column;
-      gap: 8px;
-      padding: 10px 12px;
-      background: #fff;
-      border: 1px solid #ebe8e4;
-      border-radius: 10px;
+      gap: 5px;
     }
 
-    .gauges-title {
-      font-size: 10px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: #8b8580;
-    }
-
-    .gauge { display: flex; flex-direction: column; gap: 3px; }
+    .gauge { display: flex; flex-direction: column; gap: 1px; line-height: 1.25; }
 
     .gauge-header {
       display: flex;
@@ -89,27 +108,27 @@
       align-items: center;
     }
 
-    .gauge-label { font-size: 11px; font-weight: 500; color: #5c5650; }
+    .gauge-label { font-size: 10.5px; font-weight: 500; color: #5c5650; }
     .gauge-reset { font-size: 9.5px; color: #b0aca6; }
 
     .gauge-row { display: flex; align-items: center; gap: 8px; }
 
     .gauge-track {
       flex: 1;
-      height: 6px;
-      border-radius: 3px;
+      height: 4px;
+      border-radius: 2px;
       background: #f0eeeb;
       overflow: hidden;
     }
 
     .gauge-fill {
       height: 100%;
-      border-radius: 3px;
+      border-radius: 2px;
       transition: width 0.4s ease;
     }
 
     .gauge-value {
-      font-size: 11px;
+      font-size: 10.5px;
       font-weight: 600;
       min-width: 30px;
       text-align: right;
@@ -122,7 +141,7 @@
       padding: 6px 0;
     }
 
-    /* Status pill */
+    /* Status pill — only shown when something needs the user */
     .status-bar {
       display: flex;
       align-items: center;
@@ -130,12 +149,9 @@
       padding: 7px 10px;
       border-radius: 8px;
       background: #f0eeeb;
-      transition: background 0.2s;
     }
 
-    .status-bar.ok { background: #eef6ee; }
     .status-bar.error { background: #fceeed; }
-    .status-bar.syncing { background: #fef4e8; }
     .status-bar.login { background: #fef4e8; }
 
     .status-dot {
@@ -146,9 +162,7 @@
       flex-shrink: 0;
     }
 
-    .status-bar.ok .status-dot { background: #4a9e4a; }
     .status-bar.error .status-dot { background: #d94444; }
-    .status-bar.syncing .status-dot { background: #d9952a; }
     .status-bar.login .status-dot { background: #d9952a; }
 
     .status-text {
@@ -182,10 +196,7 @@
     .delivery.error .delivery-dot { background: #d94444; }
 
     /* Buttons */
-    .btn-row { display: flex; gap: 8px; }
-
     .btn {
-      flex: 1;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -200,15 +211,6 @@
     }
 
     .btn:active { transform: scale(0.98); }
-
-    .btn-primary {
-      border: none;
-      background: #d97757;
-      color: #fff;
-      font-size: 13px;
-    }
-
-    .btn-primary:hover { background: #c96a4d; }
 
     .btn-secondary {
       border: 1px solid #ddd9d4;
@@ -229,37 +231,20 @@
     }
 
     /* Footer */
-    .footer {
-      border-top: 1px solid #ebe8e4;
-      padding-top: 8px;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .path-line {
-      font-size: 10px;
-      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-      color: #8b8580;
-      overflow-wrap: anywhere;
-      cursor: pointer;
-    }
-
-    .path-line:hover { color: #d97757; }
-
     .footer-links {
       display: flex;
       justify-content: space-between;
-      font-size: 11px;
+      padding-top: 4px;
+      border-top: 1px solid #f0eeeb;
     }
 
     .link {
-      color: #8b8580;
+      color: #b0aca6;
       cursor: pointer;
       background: none;
       border: none;
       font-family: inherit;
-      font-size: 11px;
+      font-size: 10.5px;
       padding: 0;
     }
 
@@ -268,23 +253,25 @@
   </style>
 </head>
 <body>
-  <div class="header">
-    <div class="header-icon">
-      <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15v-4H7l5-8v4h4l-5 8z"/></svg>
-    </div>
-    <div class="header-text">
-      <div class="header-title">claude-usage</div>
-      <div class="header-subtitle" id="subtitle"></div>
-    </div>
-  </div>
-
   <div class="content">
-    <div class="gauges">
-      <div class="gauges-title" id="gauges-title">Usage</div>
-      <div id="gauge-list"></div>
+    <div class="card-head">
+      <span class="headline" id="headline"></span>
+      <div class="header-actions">
+        <button id="settings-btn" class="icon-btn">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+        <button id="sync-btn" class="icon-btn">
+          <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        </button>
+        <button id="minimize-btn" class="icon-btn">
+          <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+      </div>
     </div>
 
-    <div id="status" class="status-bar">
+    <div id="gauge-list"></div>
+
+    <div id="status" class="status-bar" hidden>
       <div class="status-dot"></div>
       <span class="status-text" id="status-text"></span>
     </div>
@@ -294,23 +281,14 @@
       <span id="delivery-text"></span>
     </div>
 
-    <div class="btn-row">
-      <button id="sync-btn" class="btn btn-primary">
-        <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-        <span id="sync-label"></span>
-      </button>
-      <button id="login-btn" class="btn btn-secondary">
-        <svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-        <span id="login-label"></span>
-      </button>
-    </div>
+    <button id="login-btn" class="btn btn-secondary" hidden>
+      <svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+      <span id="login-label"></span>
+    </button>
 
-    <div class="footer">
-      <div class="path-line" id="output-path"></div>
-      <div class="footer-links">
-        <button class="link" id="config-btn"></button>
-        <button class="link danger" id="quit-btn"></button>
-      </div>
+    <div class="footer-links">
+      <button class="link danger" id="logout-btn"></button>
+      <button class="link" id="quit-btn"></button>
     </div>
   </div>
 

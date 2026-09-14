@@ -7,7 +7,7 @@ copyright: Copyright © 2026 Cyril
 directories:
   output: dist
 
-# No runtime dependency — the app is the five files in src/ plus the Electron runtime.
+# No runtime dependency — the app is the files in src/ plus the Electron runtime.
 files:
   - src/**/*
   - package.json
