@@ -1,0 +1,45 @@
+appId: com.pandaprog.claude-usage
+# Keep productName lowercase: it decides the userData folder name
+# (%APPDATA%/claude-usage), which holds the saved claude.ai session.
+productName: claude-usage
+copyright: Copyright © 2026 Cyril
+
+directories:
+  output: dist
+
+# No runtime dependency — the app is the five files in src/ plus the Electron runtime.
+files:
+  - src/**/*
+  - package.json
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  icon: src/icon.png
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  shortcutName: claude-usage
+  artifactName: ${productName}-${version}-setup.${ext}
+
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  icon: src/icon.png
+  category: public.app-category.developer-tools
+  # A tray-only app has no windows of its own to show at launch.
+  extendInfo:
+    LSUIElement: true

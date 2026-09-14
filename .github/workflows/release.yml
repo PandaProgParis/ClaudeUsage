@@ -1,0 +1,133 @@
+name: Release
+
+# Pushing a v* tag is the whole release process: this builds the installers on
+# GitHub's own runners, attests where they came from, and publishes them.
+# Nothing is ever uploaded from a developer machine.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: dist:win
+            pattern: dist/*.exe
+            artifact: windows
+          - os: macos-latest
+            script: dist:mac
+            pattern: dist/*.dmg
+            artifact: macos
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Build installers
+        run: npm run ${{ matrix.script }}
+        env:
+          # The builds are unsigned on purpose: never let electron-builder pick
+          # up a stray signing identity from the runner and fail the job.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # Binds each binary to this exact commit, workflow file and runner.
+      # Anyone can check it: gh attestation verify <file> --repo PandaProgParis/ClaudeUsage
+      - name: Attest provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ matrix.pattern }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.pattern }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    # workflow_dispatch runs the build as a dry run; only a tag publishes.
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Release notes
+        run: |
+          cat > notes.md <<'EOF'
+          ## Downloads
+
+          | File | For |
+          |---|---|
+          | `claude-usage-*-setup.exe` | Windows installer — **recommended**, a stable path means reliable start-at-login |
+          | `claude-usage-*-portable.exe` | Windows, no install — put it somewhere permanent before enabling start-at-login |
+          | `claude-usage-*.dmg` | macOS, Intel + Apple Silicon |
+
+          ## These binaries are unsigned
+
+          Code signing certificates cost several hundred euros a year, so this
+          project does not have one. Windows SmartScreen and macOS Gatekeeper
+          will warn you on first launch.
+
+          - **Windows** — *More info* → *Run anyway*.
+          - **macOS** — right-click the app → *Open*, or
+            `xattr -dr com.apple.quarantine /Applications/claude-usage.app`.
+
+          ## Verify before you trust
+
+          You do not have to take my word for any of this. Every file here was
+          built by GitHub Actions from the tagged commit — not on my machine —
+          and carries a signed provenance attestation:
+
+          ```
+          gh attestation verify claude-usage-setup.exe --repo PandaProgParis/ClaudeUsage
+          ```
+
+          That tells you which commit, which workflow file and which runner
+          produced the file. The build log is public, and so is the source.
+
+          `SHA256SUMS.txt` holds the checksums:
+
+          ```
+          sha256sum -c SHA256SUMS.txt          # Linux / macOS
+          Get-FileHash .\claude-usage-setup.exe -Algorithm SHA256   # Windows
+          ```
+          EOF
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" artifacts/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md

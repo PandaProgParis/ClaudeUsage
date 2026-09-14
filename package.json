@@ -1,0 +1,28 @@
+{
+  "name": "claude-usage",
+  "productName": "claude-usage",
+  "version": "1.0.0",
+  "description": "Background tray agent that snapshots your claude.ai usage limits to a JSON file",
+  "main": "src/main.js",
+  "license": "MIT",
+  "author": "Cyril",
+  "keywords": [
+    "claude",
+    "usage",
+    "electron",
+    "tray",
+    "monitoring"
+  ],
+  "scripts": {
+    "start": "electron .",
+    "test": "vitest run",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^26.8.1",
+    "vitest": "^3.0.0"
+  }
+}
