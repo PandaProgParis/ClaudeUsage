@@ -11,6 +11,9 @@ import {
   hasUsageShape,
   formatResetTime,
   buildGauges,
+  MIGRATED_ACCOUNT_ID,
+  partitionFor,
+  resolveAccounts,
 } from '../src/lib.js'
 
 const HOME = 'C:/Users/tester'
@@ -314,5 +317,72 @@ describe('buildGauges', () => {
   it('returns nothing for an empty or absent payload', () => {
     expect(buildGauges(null, now)).toEqual([])
     expect(buildGauges({}, now)).toEqual([])
+  })
+})
+
+describe('partitionFor', () => {
+  it('maps the migrated account onto the historical partition', () => {
+    // Renaming this partition would log every existing user out.
+    expect(partitionFor(MIGRATED_ACCOUNT_ID)).toBe('persist:claudeai')
+  })
+
+  it('suffixes any other account', () => {
+    expect(partitionFor('7f3a9c21')).toBe('persist:claudeai-7f3a9c21')
+  })
+})
+
+describe('resolveAccounts', () => {
+  it('migrates a missing file onto the historical session', () => {
+    expect(resolveAccounts(null)).toEqual({
+      activeId: 'default',
+      accounts: [{ id: 'default', label: null, orgId: null }],
+    })
+  })
+
+  it('keeps an explicitly empty list empty', () => {
+    // The user removed their last account: the panel must offer to add one,
+    // not resurrect the historical account.
+    expect(resolveAccounts({ activeId: null, accounts: [] })).toEqual({
+      activeId: null,
+      accounts: [],
+    })
+  })
+
+  it('keeps entries in order and normalises their fields', () => {
+    const resolved = resolveAccounts({
+      activeId: '7f3a9c21',
+      accounts: [
+        { id: 'default', label: '  Cyril  ', orgId: 'org-1' },
+        { id: '7f3a9c21', label: '', orgId: null },
+      ],
+    })
+    expect(resolved.activeId).toBe('7f3a9c21')
+    expect(resolved.accounts).toEqual([
+      { id: 'default', label: 'Cyril', orgId: 'org-1' },
+      { id: '7f3a9c21', label: null, orgId: null },
+    ])
+  })
+
+  it('drops duplicates and entries without a usable id', () => {
+    const resolved = resolveAccounts({
+      accounts: [
+        { id: 'a' },
+        { id: 'a', label: 'dupe' },
+        { id: '   ' },
+        null,
+        'nonsense',
+        { label: 'no id' },
+      ],
+    })
+    expect(resolved.accounts).toEqual([{ id: 'a', label: null, orgId: null }])
+  })
+
+  it('falls back to the first account when activeId is orphaned', () => {
+    const resolved = resolveAccounts({ activeId: 'gone', accounts: [{ id: 'a' }, { id: 'b' }] })
+    expect(resolved.activeId).toBe('a')
+  })
+
+  it('treats a non-object payload as a corrupted file, not as a migration', () => {
+    expect(resolveAccounts([1, 2, 3])).toEqual({ activeId: null, accounts: [] })
   })
 })

@@ -86,6 +86,57 @@ function configProblems(raw) {
   return problems
 }
 
+// --- Accounts ---
+
+// The partition every 1.0.x install already holds its claude.ai session in. The
+// `default` account id maps onto it so an upgrade does not log anyone out — same
+// gravity as renaming productName.
+const DEFAULT_PARTITION = 'persist:claudeai'
+const MIGRATED_ACCOUNT_ID = 'default'
+
+function partitionFor(id) {
+  return id === MIGRATED_ACCOUNT_ID ? DEFAULT_PARTITION : DEFAULT_PARTITION + '-' + id
+}
+
+function cleanString(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+/**
+ * Normalise accounts.json. A *missing* file means an upgrade from a
+ * single-account version, so it migrates to the historical session; a file
+ * holding an empty list means the user removed their last account and must be
+ * left empty. An unreadable file reaches us as `null` too: starting from the
+ * historical session is the only outcome that preserves a live login.
+ */
+function resolveAccounts(raw) {
+  if (raw == null) {
+    return {
+      activeId: MIGRATED_ACCOUNT_ID,
+      accounts: [{ id: MIGRATED_ACCOUNT_ID, label: null, orgId: null }],
+    }
+  }
+
+  const source = typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const entries = Array.isArray(source.accounts) ? source.accounts : []
+  const seen = new Set()
+  const accounts = []
+
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') continue
+    const id = cleanString(entry.id)
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    accounts.push({ id, label: cleanString(entry.label), orgId: cleanString(entry.orgId) })
+  }
+
+  const activeId = accounts.some(a => a.id === source.activeId)
+    ? source.activeId
+    : accounts.length > 0 ? accounts[0].id : null
+
+  return { activeId, accounts }
+}
+
 /**
  * Pick which organization to query. claude.ai stores the active one in the
  * `lastActiveOrg` cookie; otherwise prefer an org that can actually chat.
@@ -361,6 +412,9 @@ module.exports = {
   resolveConfig,
   resolveEndpoint,
   configProblems,
+  MIGRATED_ACCOUNT_ID,
+  partitionFor,
+  resolveAccounts,
   pickOrganization,
   isAuthFailure,
   hasUsageShape,
