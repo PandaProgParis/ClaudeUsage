@@ -101,6 +101,7 @@ function panelLabels() {
     addAccount: t('panelAddAccount'),
     removeAccount: t('panelRemoveAccount'),
     activate: t('panelActivate'),
+    noAccount: t('noAccount'),
     quit: t('panelQuit'),
     pending: t('panelPending'),
     reset: t('panelReset', { time: '{time}' }), // the panel fills {time} per gauge
@@ -366,7 +367,9 @@ function panelState() {
   const active = activeAccount()
   return {
     status: aggregateStatus(accounts, activeId),
-    headline: active ? active.headline : t('noAccount'),
+    // No account: the empty state in the middle of the panel speaks for itself,
+    // so the top line stays out of the way.
+    headline: active ? active.headline : '',
     accounts: accounts.map(account => ({
       id: account.id,
       name: accountName(account),

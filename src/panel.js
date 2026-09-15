@@ -2,6 +2,7 @@
 // (lib.js owns that logic), so this file only paints and forwards clicks.
 
 const headline = document.getElementById('headline')
+const content = document.getElementById('content')
 const accountList = document.getElementById('account-list')
 const syncBtn = document.getElementById('sync-btn')
 const settingsBtn = document.getElementById('settings-btn')
@@ -103,6 +104,19 @@ function headHtml(account) {
   `
 }
 
+/** Nothing to show yet: the invitation takes the middle of the panel. */
+function emptyStateHtml() {
+  return `
+    <div class="empty-state">
+      <span class="empty-title">${escapeHtml(labels.noAccount || '')}</span>
+      <button class="btn btn-secondary" data-action="add">
+        <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <span>${escapeHtml(labels.addAccount || '')}</span>
+      </button>
+    </div>
+  `
+}
+
 function accountHtml(account, state) {
   return `
     <div class="account ${account.active ? 'active' : ''}">
@@ -126,7 +140,14 @@ function render(state) {
 
   syncBtn.classList.toggle('spinning', state.status === 'syncing')
 
-  accountList.innerHTML = (state.accounts || []).map(a => accountHtml(a, state)).join('')
+  const accounts = state.accounts || []
+  const empty = accounts.length === 0
+  content.classList.toggle('empty', empty)
+  // The centred invitation replaces the footer link rather than doubling it.
+  addAccountBtn.hidden = empty
+  accountList.innerHTML = empty
+    ? emptyStateHtml()
+    : accounts.map(a => accountHtml(a, state)).join('')
 
   // The panel sizes itself to its content; main.js resizes the window in place.
   requestAnimationFrame(() => {
@@ -140,6 +161,7 @@ accountList.addEventListener('click', (event) => {
   const target = event.target.closest('[data-action]')
   if (!target) return
   const id = target.dataset.id
+  if (target.dataset.action === 'add') window.agent.addAccount()
   if (target.dataset.action === 'activate') window.agent.activate(id)
   if (target.dataset.action === 'relogin') window.agent.relogin(id)
   if (target.dataset.action === 'remove') window.agent.removeAccount(id)

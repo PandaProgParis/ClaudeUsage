@@ -93,6 +93,24 @@
       gap: 5px;
     }
 
+    /* No account: the panel is sized to its content, so reaching the window's
+       own minimum height (140px, see resizePanel) is what actually pins the
+       footer to the bottom edge instead of leaving a gap under it. */
+    .content.empty { min-height: 140px; }
+    .content.empty #account-list { flex: 1; }
+
+    .empty-state {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+    }
+
+    .empty-title { font-size: 11px; color: #b0aca6; }
+    .empty-state .btn { padding: 7px 14px; }
+
     /* Gauges — spacing comes from the .account block that holds them */
     .gauge { display: flex; flex-direction: column; gap: 1px; line-height: 1.25; }
 
@@ -318,6 +336,10 @@
       border-top: 1px solid #f0eeeb;
     }
 
+    /* With no account the add link moves to the middle of the panel, so Quit is
+       alone on the bar and keeps its usual right-hand place. */
+    .content.empty .footer-links { margin-top: auto; justify-content: flex-end; }
+
     .link {
       color: #b0aca6;
       cursor: pointer;
@@ -333,7 +355,7 @@
   </style>
 </head>
 <body>
-  <div class="content">
+  <div class="content" id="content">
     <div class="card-head">
       <span class="headline" id="headline"></span>
       <div class="header-actions">
