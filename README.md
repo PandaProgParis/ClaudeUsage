@@ -58,6 +58,8 @@ Download from [Releases](../../releases):
 
 Binaries are unsigned, so Windows SmartScreen and macOS Gatekeeper will warn on first launch. On macOS: right-click the app → Open, or `xattr -dr com.apple.quarantine /Applications/claude-usage.app`.
 
+*(I have not been able to test the macOS build myself yet - it is produced by CI but I have no Mac to run it on, so I would be genuinely happy to hear how it goes from Mac users. Open an issue either way, working or not.)*
+
 ### Verify what you downloaded
 
 You have no reason to trust a stranger's `.exe`, so don't - check it instead.
@@ -115,15 +117,17 @@ A personal account and a work one, without logging out and back in every time. *
 | One block per account, titled with its organization name | The one with a coloured dot is the active account |
 | A collapsed block, showing its percentages on one line | Enough to see which account still has room, without expanding it |
 | A click on a collapsed block's header | Expands it **and** makes that account the active one |
-| The bin icon on the right of a header | Asks in place of the gauges, then wipes that account's saved session and drops the block |
+| The bin icon on the right of a header | Asks first, right there in place of the gauges: **Cancel** or **Delete** |
 
-Each account keeps its own saved session, so both stay logged in. A session that expires marks only its own block **reconnect** and leaves the other account reading normally; the login window no longer opens by itself unless every account is logged out.
+Each account keeps its own saved session, so both stay logged in. A session that expires marks only its own block **Log in again** and leaves the other account reading normally - the login window no longer opens by itself unless every account is logged out at once.
 
-The header is there with a single account too, so you can always see which account you are looking at and remove it if you want to start over.
+The header is there with a single account too, so you can always see which account you are looking at, and delete it if you want to start over. While a new account is still waiting for its login, its block shows just that, with no name and no empty gauges.
 
-**One thing to know if you use the output file.** It always holds the **active** account's payload, because that is what a single-account reader expects. Switching the active account rewrites it, so the dashboard or extension reading that file follows your switch. With one account, nothing changes: the panel looks and behaves exactly as it did before.
+**One thing to know if you use the output file.** It always holds the **active** account's payload, because that is what a single-account reader expects. Switching the active account rewrites it, so the dashboard or extension reading that file follows your switch. With one account, nothing changes.
 
 Tick **Expand every account** in the settings to keep all the blocks open at once.
+
+Your accounts are listed in `accounts.json` next to the config, and each one gets its own isolated browser session. Deleting an account wipes that session and nothing else: the other accounts, the config and the JSON already on disk are untouched.
 
 ## Output
 
