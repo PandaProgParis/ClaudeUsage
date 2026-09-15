@@ -608,11 +608,10 @@ async function syncAccount(account) {
     // The payload carries no account identity, so a block's name comes from the
     // organizations listing — refreshed on every reading, it costs nothing.
     const name = organizationName(orgs.json, orgId)
-    if (name && name !== account.label) {
-      account.label = name
-      writeAccountsFile()
-    }
+    const changed = (name && name !== account.label) || orgId !== account.orgId
+    if (name) account.label = name
     account.orgId = orgId
+    if (changed) writeAccountsFile() // after both fields, or the file lags behind
 
     const usage = await pageFetch(account, '/api/organizations/' + orgId + '/usage')
     if (stale()) return
@@ -1009,7 +1008,10 @@ function keepPanelOnScreen() {
 
 function showPanel() {
   if (!panelWindow || panelWindow.isDestroyed()) createPanel()
-  panelWindow.webContents.send('usage:state', state)
+  // Through broadcast, never a hand-rolled send: `state` alone no longer holds
+  // the account list, and pushing it raw left the panel with no blocks at all
+  // until the next reading.
+  broadcast()
   if (panelMoved) keepPanelOnScreen()
   else positionPanel()
   panelWindow.show()
