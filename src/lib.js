@@ -268,6 +268,64 @@ function buildGauges(payload, now = Date.now(), language = 'en') {
     }))
 }
 
+// --- Account presentation ---
+
+/** The one-line digest a collapsed account block shows: "42% · 17%". */
+function summarizeGauges(gauges) {
+  if (!Array.isArray(gauges) || gauges.length === 0) return ''
+  return gauges.map(g => `${g.percent}%`).join(' · ')
+}
+
+/**
+ * One status for the tray icon and the panel pill. Anything that needs the user
+ * wins over the active account's own state: a healthy perso account must not
+ * hide an expired pro one.
+ */
+function aggregateStatus(accounts, activeId) {
+  const list = Array.isArray(accounts) ? accounts.filter(Boolean) : []
+  if (list.length === 0) return 'login'
+  for (const status of ['error', 'login', 'syncing']) {
+    if (list.some(a => a.status === status)) return status
+  }
+  const active = list.find(a => a.id === activeId)
+  return (active && active.status) || 'idle'
+}
+
+/** The display name of an account: the organization its reading came from. */
+function organizationName(orgs, orgId) {
+  if (!Array.isArray(orgs)) return null
+  const org = orgs.find(o => o && o.uuid === orgId)
+  if (!org) return null
+  return typeof org.name === 'string' && org.name.trim() ? org.name.trim() : null
+}
+
+function gaugeDetail(gauges) {
+  return (Array.isArray(gauges) ? gauges : [])
+    .map(g => `${String(g.label || '').replace('Weekly — ', '')} ${g.percent}%`)
+    .join(' · ')
+}
+
+/**
+ * Tray tooltip. With one account it stays as detailed as it was in 1.0.x; with
+ * several, one line per account answers the only question worth hovering for —
+ * which one still has room.
+ */
+function buildTooltip(accounts) {
+  const list = Array.isArray(accounts) ? accounts.filter(Boolean) : []
+  if (list.length === 0) return 'claude-usage'
+
+  if (list.length === 1) {
+    const only = list[0]
+    return ['claude-usage', only.message, gaugeDetail(only.gauges)].filter(Boolean).join('\n')
+  }
+
+  return ['claude-usage'].concat(list.map(account => {
+    const name = account.label || account.id
+    const summary = summarizeGauges(account.gauges)
+    return `${name} — ${summary || account.message || ''}`.trim()
+  })).join('\n')
+}
+
 // --- i18n ---
 //
 // The agent follows the system locale: French for a French desktop, English
@@ -421,4 +479,8 @@ module.exports = {
   formatResetTime,
   buildGauges,
   modelColor,
+  summarizeGauges,
+  aggregateStatus,
+  organizationName,
+  buildTooltip,
 }

@@ -14,6 +14,10 @@ import {
   MIGRATED_ACCOUNT_ID,
   partitionFor,
   resolveAccounts,
+  summarizeGauges,
+  aggregateStatus,
+  organizationName,
+  buildTooltip,
 } from '../src/lib.js'
 
 const HOME = 'C:/Users/tester'
@@ -384,5 +388,80 @@ describe('resolveAccounts', () => {
 
   it('treats a non-object payload as a corrupted file, not as a migration', () => {
     expect(resolveAccounts([1, 2, 3])).toEqual({ activeId: null, accounts: [] })
+  })
+})
+
+describe('summarizeGauges', () => {
+  it('joins the percentages for a collapsed block', () => {
+    expect(summarizeGauges([{ percent: 42 }, { percent: 17 }])).toBe('42% · 17%')
+  })
+
+  it('returns an empty string when there is nothing to summarize', () => {
+    expect(summarizeGauges([])).toBe('')
+    expect(summarizeGauges(null)).toBe('')
+  })
+})
+
+describe('aggregateStatus', () => {
+  it('reports an error before anything else', () => {
+    const accounts = [{ id: 'a', status: 'ok' }, { id: 'b', status: 'error' }]
+    expect(aggregateStatus(accounts, 'a')).toBe('error')
+  })
+
+  it('reports a login need before a reading in progress', () => {
+    const accounts = [{ id: 'a', status: 'syncing' }, { id: 'b', status: 'login' }]
+    expect(aggregateStatus(accounts, 'a')).toBe('login')
+  })
+
+  it('falls back to the active account when nothing needs the user', () => {
+    const accounts = [{ id: 'a', status: 'idle' }, { id: 'b', status: 'ok' }]
+    expect(aggregateStatus(accounts, 'b')).toBe('ok')
+  })
+
+  it('asks for a login when there is no account at all', () => {
+    expect(aggregateStatus([], null)).toBe('login')
+  })
+})
+
+describe('organizationName', () => {
+  it('finds the name of the organization being read', () => {
+    const orgs = [{ uuid: 'o1', name: 'Matchem' }, { uuid: 'o2', name: 'Perso' }]
+    expect(organizationName(orgs, 'o2')).toBe('Perso')
+  })
+
+  it('returns null when the organization is absent or unnamed', () => {
+    expect(organizationName([{ uuid: 'o1', name: '  ' }], 'o1')).toBe(null)
+    expect(organizationName([], 'o1')).toBe(null)
+    expect(organizationName(null, 'o1')).toBe(null)
+  })
+})
+
+describe('buildTooltip', () => {
+  it('keeps the single-account tooltip detailed', () => {
+    const accounts = [{
+      id: 'default',
+      label: 'Perso',
+      message: 'Read at 01:07',
+      gauges: [{ label: 'Session (5h)', percent: 17 }, { label: 'Weekly — Fable', percent: 23 }],
+    }]
+    expect(buildTooltip(accounts)).toBe(
+      'claude-usage\nRead at 01:07\nSession (5h) 17% · Fable 23%'
+    )
+  })
+
+  it('gives one line per account once there are several', () => {
+    const accounts = [
+      { id: 'default', label: 'Perso', message: 'Read at 01:07', gauges: [{ label: 'Session (5h)', percent: 17 }] },
+      { id: 'b', label: 'Matchem', message: 'Session expired', gauges: [] },
+    ]
+    expect(buildTooltip(accounts)).toBe('claude-usage\nPerso — 17%\nMatchem — Session expired')
+  })
+
+  it('survives an account with no label and no reading', () => {
+    expect(buildTooltip([{ id: 'b', label: null, message: '', gauges: [] }])).toBe('claude-usage')
+  })
+
+  it('names the app when there is no account', () => {
+    expect(buildTooltip([])).toBe('claude-usage')
   })
 })
