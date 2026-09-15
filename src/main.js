@@ -27,7 +27,7 @@ if (typeof electron === 'string') {
   process.exit(0)
 }
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, screen, shell, ipcMain, session, dialog } = electron
+const { app, BrowserWindow, Tray, Menu, nativeImage, screen, shell, ipcMain, session } = electron
 
 const {
   createTranslator,
@@ -97,9 +97,10 @@ function panelLabels() {
     sync: t('panelSync'),
     settings: t('panelSettings'),
     minimize: t('panelMinimize'),
-    relogin: t('panelRelogin'),
     addAccount: t('panelAddAccount'),
     removeAccount: t('panelRemoveAccount'),
+    confirmDelete: t('panelConfirmDelete'),
+    cancel: t('panelCancel'),
     activate: t('panelActivate'),
     noAccount: t('noAccount'),
     quit: t('panelQuit'),
@@ -377,6 +378,11 @@ function panelState() {
       expanded: config.expandAll || account.id === activeId,
       status: account.status,
       message: account.message,
+      // Never connected and waiting on its login window: there is no name and
+      // no reading to show, so the block is replaced by a centred invitation.
+      pending: !account.label && account.status === 'login',
+      // One place decides the wording: a named account has been connected before.
+      loginLabel: account.label ? t('panelRelogin') : t('panelLogin'),
       gauges: account.gauges,
       summary: summarizeGauges(account.gauges),
       // The POST only ever concerns the account whose payload was written.
@@ -707,7 +713,12 @@ function startLogin(account, reason) {
   loginOwner = account.id
   abandonReading(account)
   log('login required (' + account.id + '): ' + reason)
-  setAccountState(account, { status: 'login', message: t('loginPrompt', { reason }) })
+  // A never-connected account shows the reason alone, centred above its own
+  // login button: telling it to use the window would just repeat the button.
+  setAccountState(account, {
+    status: 'login',
+    message: account.label ? t('loginPrompt', { reason }) : reason,
+  })
 
   const win = accountWindow(account)
   loadPage(account, LOGIN_PAGE).then(() => {
@@ -764,9 +775,8 @@ function onLoginWindowClosed(account) {
   cancelLogin(account)
   if (abandoned) {
     log('add-account abandoned — dropping ' + account.id)
-    // Out of the close handler before destroying the window it fired on, and
-    // without a confirmation prompt: the user just closed that very window.
-    setImmediate(() => dropAccount(account.id))
+    // Out of the close handler before destroying the window it fired on.
+    setImmediate(() => removeAccount(account.id))
     return
   }
   broadcast()
@@ -806,45 +816,15 @@ function activateAccount(id) {
 }
 
 /**
- * Wiping a session is irreversible (a new login needs a fresh e-mail code) and
- * the button that does it now sits in the block header, a few pixels from the
- * switch target. So it asks first.
- */
-async function confirmRemoval(account) {
-  const options = {
-    type: 'warning',
-    buttons: [t('removeConfirmCancel'), t('removeConfirmOk')],
-    defaultId: 0,
-    cancelId: 0,
-    message: t('removeConfirm', { name: accountName(account) }),
-    detail: t('removeConfirmDetail'),
-  }
-  try {
-    const parent = panelWindow && !panelWindow.isDestroyed() ? panelWindow : null
-    const { response } = parent
-      ? await dialog.showMessageBox(parent, options)
-      : await dialog.showMessageBox(options)
-    return response === 1
-  } catch (err) {
-    log('removal confirmation failed: ' + err.message)
-    return false // never wipe a session because a dialog misbehaved
-  }
-}
-
-/**
  * Forget an account: wipe its partition, drop its window, remove its block. This
  * replaces 1.0.x's "log out" — reconnecting is one click on "add an account", so
  * a second, nearly identical gesture was not worth its code.
+ *
+ * Nothing is asked here: the panel asks in place of the gauges, and an abandoned
+ * add-account attempt needs no question at all. That is also why the tray has no
+ * removal entry — a menu click cannot be confirmed inside the block.
  */
 async function removeAccount(id) {
-  const account = findAccount(id)
-  if (!account) return
-  if (!(await confirmRemoval(account))) return
-  return dropAccount(id)
-}
-
-/** The same thing without asking — for an add-account attempt the user abandoned. */
-async function dropAccount(id) {
   const account = findAccount(id)
   if (!account) return
 
@@ -933,7 +913,6 @@ function buildTrayMenu() {
     { type: 'separator' },
     { label: t('trayRelogin'), click: () => startLogin(activeAccount(), t('reconnectRequested')) },
     { label: t('trayAddAccount'), click: () => addAccount() },
-    { label: t('trayRemoveAccount'), enabled: Boolean(activeId), click: () => removeAccount(activeId) },
     { type: 'separator' },
     { label: t('trayOpenJson'), click: () => shell.showItemInFolder(config.outputPath) },
     { label: t('trayOpenConfig'), click: () => shell.openPath(configFilePath()) },

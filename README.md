@@ -99,7 +99,7 @@ Start-at-login is enabled on that first launch. Untick **Start at login** in the
 | Action | Result |
 |---|---|
 | Left click | The gauges panel: session (5 h), weekly, and one bar per model |
-| Right click | Sync now · Settings… · Log in again · Add an account… · Remove the active account · Open the JSON folder / the config / the log · Start at login · Quit |
+| Right click | Sync now · Settings… · Log in again · Add an account… · Open the JSON folder / the config / the log · Start at login · Quit |
 | Hover | Last reading plus gauges, on one line - one line per account once you have several |
 
 The panel is a small floating window: drag it anywhere and it stays there, and it stays open until you close it (the minimize button in its corner, Escape, or another click on the tray icon). Its top line shows the time of the last reading, a gear that opens the settings window and a refresh button that spins while a reading is in progress. Resets beyond a day read in days (`5d 22h`). **Log in again** appears only when a reading fails.
@@ -115,7 +115,7 @@ A personal account and a work one, without logging out and back in every time. *
 | One block per account, titled with its organization name | The one with a coloured dot is the active account |
 | A collapsed block, showing its percentages on one line | Enough to see which account still has room, without expanding it |
 | A click on a collapsed block's header | Expands it **and** makes that account the active one |
-| The bin icon on the right of a header | Wipes that account's saved session and drops the block, after asking |
+| The bin icon on the right of a header | Asks in place of the gauges, then wipes that account's saved session and drops the block |
 
 Each account keeps its own saved session, so both stay logged in. A session that expires marks only its own block **reconnect** and leaves the other account reading normally; the login window no longer opens by itself unless every account is logged out.
 

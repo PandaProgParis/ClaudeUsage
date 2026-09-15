@@ -504,8 +504,8 @@ describe('account messages', () => {
       for (const key of [
         'noAccount', 'accountUnnamed', 'loginBusy',
         'panelAddAccount', 'panelRemoveAccount', 'panelActivate',
-        'removeConfirm', 'removeConfirmDetail', 'removeConfirmOk', 'removeConfirmCancel',
-        'trayAddAccount', 'trayRemoveAccount', 'configExpandAll', 'configExpandAllHint',
+        'panelLogin', 'panelConfirmDelete', 'panelCancel',
+        'trayAddAccount', 'configExpandAll', 'configExpandAllHint',
       ]) {
         expect(MESSAGES[language][key], `${language}.${key}`).toBeTruthy()
       }

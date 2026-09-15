@@ -11,6 +11,11 @@ const addAccountBtn = document.getElementById('add-account-btn')
 const quitBtn = document.getElementById('quit-btn')
 
 let labels = {}
+// The only state this renderer owns, and it is deliberate: which block is asking
+// before it deletes. It is pure display, it must survive the re-render that every
+// reading triggers, and pushing it through the main process would buy nothing.
+let confirmingId = null
+let lastState = null
 
 function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, c =>
@@ -61,7 +66,18 @@ function deliveryHtml(account, endpoint) {
   `
 }
 
-/** The pill and the reconnect button only earn their place when the user is needed. */
+const LOGIN_ICON = '<svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>'
+
+function loginButtonHtml(account) {
+  return `
+    <button class="btn btn-secondary" data-action="relogin" data-id="${escapeHtml(account.id)}">
+      ${LOGIN_ICON}
+      <span>${escapeHtml(account.loginLabel || '')}</span>
+    </button>
+  `
+}
+
+/** The pill and the login button only earn their place when the user is needed. */
 function troubleHtml(account) {
   if (account.status !== 'error' && account.status !== 'login') return ''
   return `
@@ -69,10 +85,22 @@ function troubleHtml(account) {
       <div class="status-dot"></div>
       <span class="status-text">${escapeHtml(account.message || '')}</span>
     </div>
-    <button class="btn btn-secondary" data-action="relogin" data-id="${escapeHtml(account.id)}">
-      <svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-      <span>${escapeHtml(labels.relogin || '')}</span>
-    </button>
+    ${loginButtonHtml(account)}
+  `
+}
+
+/**
+ * A brand new account waiting on its login window. No name, no reading, nothing
+ * worth a header or an empty gauge list — just what the user has to do next.
+ */
+function pendingHtml(account) {
+  return `
+    <div class="account pending">
+      <div class="empty-state">
+        <span class="empty-title">${escapeHtml(account.message || '')}</span>
+        ${loginButtonHtml(account)}
+      </div>
+    </div>
   `
 }
 
@@ -96,7 +124,7 @@ function headHtml(account) {
         <span class="account-name">${escapeHtml(account.name)}</span>
         ${summary}
       </button>
-      <button class="account-remove" data-action="remove" data-id="${id}"
+      <button class="account-remove" data-action="ask-remove" data-id="${id}"
               title="${escapeHtml(labels.removeAccount || '')}">
         <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
       </button>
@@ -117,7 +145,25 @@ function emptyStateHtml() {
   `
 }
 
+/** Asked in place of the gauges, so the question sits where the block was. */
+function confirmHtml(account) {
+  return `
+    <div class="confirm-row">
+      <button class="btn btn-secondary" data-action="cancel-remove">${escapeHtml(labels.cancel || '')}</button>
+      <button class="btn btn-danger" data-action="remove" data-id="${escapeHtml(account.id)}">${escapeHtml(labels.confirmDelete || '')}</button>
+    </div>
+  `
+}
+
 function accountHtml(account, state) {
+  if (account.id === confirmingId) {
+    return `
+      <div class="account ${account.active ? 'active' : ''}">
+        ${headHtml(account)}
+        ${confirmHtml(account)}
+      </div>
+    `
+  }
   return `
     <div class="account ${account.active ? 'active' : ''}">
       ${headHtml(account)}
@@ -129,7 +175,13 @@ function accountHtml(account, state) {
 
 function render(state) {
   if (!state) return
+  lastState = state
   labels = state.labels || {}
+
+  // A block that went away (removed, or removed elsewhere) cannot stay pending.
+  if (confirmingId && !(state.accounts || []).some(a => a.id === confirmingId)) {
+    confirmingId = null
+  }
 
   headline.textContent = state.headline || ''
   syncBtn.title = labels.sync || ''
@@ -141,13 +193,14 @@ function render(state) {
   syncBtn.classList.toggle('spinning', state.status === 'syncing')
 
   const accounts = state.accounts || []
-  const empty = accounts.length === 0
-  content.classList.toggle('empty', empty)
-  // The centred invitation replaces the footer link rather than doubling it.
-  addAccountBtn.hidden = empty
-  accountList.innerHTML = empty
+  // Both of these fill the panel with a single centred message, so they want
+  // the footer pinned to the bottom and no duplicate add link above it.
+  const centred = accounts.length === 0 || (accounts.length === 1 && accounts[0].pending)
+  content.classList.toggle('empty', centred)
+  addAccountBtn.hidden = centred
+  accountList.innerHTML = accounts.length === 0
     ? emptyStateHtml()
-    : accounts.map(a => accountHtml(a, state)).join('')
+    : accounts.map(a => (a.pending ? pendingHtml(a) : accountHtml(a, state))).join('')
 
   // The panel sizes itself to its content; main.js resizes the window in place.
   requestAnimationFrame(() => {
@@ -161,10 +214,22 @@ accountList.addEventListener('click', (event) => {
   const target = event.target.closest('[data-action]')
   if (!target) return
   const id = target.dataset.id
-  if (target.dataset.action === 'add') window.agent.addAccount()
-  if (target.dataset.action === 'activate') window.agent.activate(id)
-  if (target.dataset.action === 'relogin') window.agent.relogin(id)
-  if (target.dataset.action === 'remove') window.agent.removeAccount(id)
+  const action = target.dataset.action
+  if (action === 'add') window.agent.addAccount()
+  if (action === 'activate') window.agent.activate(id)
+  if (action === 'relogin') window.agent.relogin(id)
+  if (action === 'ask-remove') {
+    confirmingId = id
+    render(lastState)
+  }
+  if (action === 'cancel-remove') {
+    confirmingId = null
+    render(lastState)
+  }
+  if (action === 'remove') {
+    confirmingId = null
+    window.agent.removeAccount(id)
+  }
 })
 
 syncBtn.addEventListener('click', () => window.agent.sync())

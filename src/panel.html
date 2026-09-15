@@ -98,6 +98,7 @@
        footer to the bottom edge instead of leaving a gap under it. */
     .content.empty { min-height: 140px; }
     .content.empty #account-list { flex: 1; }
+    .content.empty .account.pending { flex: 1; }
 
     .empty-state {
       height: 100%;
@@ -108,8 +109,11 @@
       gap: 9px;
     }
 
-    .empty-title { font-size: 11px; color: #b0aca6; }
+    .empty-title { font-size: 11.5px; font-weight: 500; color: #5c5650; text-align: center; }
     .empty-state .btn { padding: 7px 14px; }
+
+    /* A pending block stacked under real accounts keeps its own breathing room. */
+    .account.pending .empty-state { padding: 8px 0 2px; }
 
     /* Gauges — spacing comes from the .account block that holds them */
     .gauge { display: flex; flex-direction: column; gap: 1px; line-height: 1.25; }
@@ -317,6 +321,18 @@
     }
 
     .btn-secondary:hover { border-color: #d97757; color: #d97757; }
+
+    .btn-danger {
+      border: 1px solid #f0cfcc;
+      background: #fceeed;
+      color: #c0483f;
+    }
+
+    .btn-danger:hover { border-color: #d94444; background: #f9e2e0; }
+
+    /* The delete question takes the gauges' place, so it keeps their width. */
+    .confirm-row { display: flex; gap: 6px; }
+    .confirm-row .btn { flex: 1; }
 
     .btn svg {
       width: 13px;
