@@ -27,7 +27,7 @@ if (typeof electron === 'string') {
   process.exit(0)
 }
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, screen, shell, ipcMain, session } = electron
+const { app, BrowserWindow, Tray, Menu, nativeImage, screen, shell, ipcMain, session, dialog } = electron
 
 const {
   createTranslator,
@@ -100,8 +100,7 @@ function panelLabels() {
     relogin: t('panelRelogin'),
     addAccount: t('panelAddAccount'),
     removeAccount: t('panelRemoveAccount'),
-    expand: t('panelExpand'),
-    collapse: t('panelCollapse'),
+    activate: t('panelActivate'),
     quit: t('panelQuit'),
     pending: t('panelPending'),
     reset: t('panelReset', { time: '{time}' }), // the panel fills {time} per gauge
@@ -368,9 +367,6 @@ function panelState() {
   return {
     status: aggregateStatus(accounts, activeId),
     headline: active ? active.headline : t('noAccount'),
-    // With a single account the panel renders exactly as it did in 1.0.1: no
-    // block header, no switch.
-    multi: accounts.length > 1,
     accounts: accounts.map(account => ({
       id: account.id,
       name: accountName(account),
@@ -765,8 +761,9 @@ function onLoginWindowClosed(account) {
   cancelLogin(account)
   if (abandoned) {
     log('add-account abandoned — dropping ' + account.id)
-    // Out of the close handler before destroying the window it fired on.
-    setImmediate(() => removeAccount(account.id))
+    // Out of the close handler before destroying the window it fired on, and
+    // without a confirmation prompt: the user just closed that very window.
+    setImmediate(() => dropAccount(account.id))
     return
   }
   broadcast()
@@ -806,11 +803,45 @@ function activateAccount(id) {
 }
 
 /**
+ * Wiping a session is irreversible (a new login needs a fresh e-mail code) and
+ * the button that does it now sits in the block header, a few pixels from the
+ * switch target. So it asks first.
+ */
+async function confirmRemoval(account) {
+  const options = {
+    type: 'warning',
+    buttons: [t('removeConfirmCancel'), t('removeConfirmOk')],
+    defaultId: 0,
+    cancelId: 0,
+    message: t('removeConfirm', { name: accountName(account) }),
+    detail: t('removeConfirmDetail'),
+  }
+  try {
+    const parent = panelWindow && !panelWindow.isDestroyed() ? panelWindow : null
+    const { response } = parent
+      ? await dialog.showMessageBox(parent, options)
+      : await dialog.showMessageBox(options)
+    return response === 1
+  } catch (err) {
+    log('removal confirmation failed: ' + err.message)
+    return false // never wipe a session because a dialog misbehaved
+  }
+}
+
+/**
  * Forget an account: wipe its partition, drop its window, remove its block. This
  * replaces 1.0.x's "log out" — reconnecting is one click on "add an account", so
  * a second, nearly identical gesture was not worth its code.
  */
 async function removeAccount(id) {
+  const account = findAccount(id)
+  if (!account) return
+  if (!(await confirmRemoval(account))) return
+  return dropAccount(id)
+}
+
+/** The same thing without asking — for an add-account attempt the user abandoned. */
+async function dropAccount(id) {
   const account = findAccount(id)
   if (!account) return
 

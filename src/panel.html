@@ -143,18 +143,26 @@
     /* Separator between stacked accounts, never above the first one */
     .account + .account { padding-top: 6px; border-top: 1px solid #f0eeeb; }
 
-    .account-head {
+    /* A row, not a button: the remove button lives on it, and a button cannot
+       be nested inside another one. */
+    .account-head { display: flex; align-items: center; gap: 6px; }
+
+    .account-switch {
       display: flex;
       align-items: center;
       gap: 6px;
-      cursor: pointer;
+      flex: 1;
+      min-width: 0; /* lets the name ellipsis instead of pushing the button out */
       background: none;
       border: none;
       font-family: inherit;
       padding: 0;
-      width: 100%;
       text-align: left;
+      cursor: default;
     }
+
+    /* Only a block you can switch to invites a click. */
+    .account-switch[data-action] { cursor: pointer; }
 
     .account-dot {
       width: 6px;
@@ -175,7 +183,7 @@
       text-overflow: ellipsis;
     }
 
-    .account-head:hover .account-name { color: #1a1a1a; }
+    .account-switch[data-action]:hover .account-name { color: #1a1a1a; }
 
     .account-summary {
       margin-left: auto;
@@ -183,6 +191,34 @@
       color: #b0aca6;
       white-space: nowrap;
       flex-shrink: 0;
+      padding-left: 6px;
+    }
+
+    .account-remove {
+      width: 18px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      border: none;
+      border-radius: 5px;
+      background: none;
+      color: #ccc7c1;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .account-remove:hover { background: #fceeed; color: #d94444; }
+
+    .account-remove svg {
+      width: 11px;
+      height: 11px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
 
     /* Status pill — only shown when something needs the user */

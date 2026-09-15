@@ -434,6 +434,26 @@ describe('organizationName', () => {
     expect(organizationName([], 'o1')).toBe(null)
     expect(organizationName(null, 'o1')).toBe(null)
   })
+
+  it("drops claude.ai's \"'s Organization\" suffix, straight or curly", () => {
+    // A personal account is named "<email>'s Organization", which wastes the
+    // whole width of a 320px block header.
+    expect(organizationName([{ uuid: 'o1', name: "cyril@pandaprog.com's Organization" }], 'o1'))
+      .toBe('cyril@pandaprog.com')
+    expect(organizationName([{ uuid: 'o1', name: 'cyril@pandaprog.com’s Organization' }], 'o1'))
+      .toBe('cyril@pandaprog.com')
+  })
+
+  it('leaves a real organization name alone', () => {
+    expect(organizationName([{ uuid: 'o1', name: 'Matchem' }], 'o1')).toBe('Matchem')
+    expect(organizationName([{ uuid: 'o1', name: 'Organization' }], 'o1')).toBe('Organization')
+    expect(organizationName([{ uuid: 'o1', name: "Bob's Organization Ltd" }], 'o1'))
+      .toBe("Bob's Organization Ltd")
+  })
+
+  it('never returns an empty string after stripping', () => {
+    expect(organizationName([{ uuid: 'o1', name: "'s Organization" }], 'o1')).toBe("'s Organization")
+  })
 })
 
 describe('buildTooltip', () => {
@@ -483,7 +503,8 @@ describe('account messages', () => {
     for (const language of ['en', 'fr']) {
       for (const key of [
         'noAccount', 'accountUnnamed', 'loginBusy',
-        'panelAddAccount', 'panelRemoveAccount', 'panelExpand', 'panelCollapse',
+        'panelAddAccount', 'panelRemoveAccount', 'panelActivate',
+        'removeConfirm', 'removeConfirmDetail', 'removeConfirmOk', 'removeConfirmCancel',
         'trayAddAccount', 'trayRemoveAccount', 'configExpandAll', 'configExpandAllHint',
       ]) {
         expect(MESSAGES[language][key], `${language}.${key}`).toBeTruthy()

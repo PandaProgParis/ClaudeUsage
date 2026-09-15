@@ -115,9 +115,11 @@ A personal account and a work one, without logging out and back in every time. *
 | One block per account, titled with its organization name | The one with a coloured dot is the active account |
 | A collapsed block, showing its percentages on one line | Enough to see which account still has room, without expanding it |
 | A click on a collapsed block's header | Expands it **and** makes that account the active one |
-| **Remove this account** inside a block | Wipes that account's saved session and drops the block |
+| The bin icon on the right of a header | Wipes that account's saved session and drops the block, after asking |
 
 Each account keeps its own saved session, so both stay logged in. A session that expires marks only its own block **reconnect** and leaves the other account reading normally; the login window no longer opens by itself unless every account is logged out.
+
+The header is there with a single account too, so you can always see which account you are looking at and remove it if you want to start over.
 
 **One thing to know if you use the output file.** It always holds the **active** account's payload, because that is what a single-account reader expects. Switching the active account rewrites it, so the dashboard or extension reading that file follows your switch. With one account, nothing changes: the panel looks and behaves exactly as it did before.
 

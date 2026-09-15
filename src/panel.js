@@ -75,27 +75,30 @@ function troubleHtml(account) {
   `
 }
 
-/** Shown only when there is something to switch between. */
+/**
+ * The block header: name on the left, the remove button on the right. Always
+ * shown, even for a lone account — hiding it there left no way to remove that
+ * account at all. The active block is not a switch target, so it carries no
+ * data-action and does not pretend to be clickable.
+ */
 function headHtml(account) {
-  const hint = account.expanded ? labels.collapse : labels.expand
+  const id = escapeHtml(account.id)
+  const switchable = account.active ? '' : ` data-action="activate" data-id="${id}"`
+  const title = account.active ? '' : escapeHtml(labels.activate || '')
   const summary = account.expanded
     ? ''
     : `<span class="account-summary">${escapeHtml(account.summary || account.message || '')}</span>`
   return `
-    <button class="account-head" data-action="activate" data-id="${escapeHtml(account.id)}"
-            title="${escapeHtml(hint || '')}">
-      <span class="account-dot"></span>
-      <span class="account-name">${escapeHtml(account.name)}</span>
-      ${summary}
-    </button>
-  `
-}
-
-function removeHtml(account, multi) {
-  if (!multi || !account.expanded) return ''
-  return `
-    <div class="footer-links">
-      <button class="link danger" data-action="remove" data-id="${escapeHtml(account.id)}">${escapeHtml(labels.removeAccount || '')}</button>
+    <div class="account-head">
+      <button class="account-switch"${switchable} title="${title}">
+        <span class="account-dot"></span>
+        <span class="account-name">${escapeHtml(account.name)}</span>
+        ${summary}
+      </button>
+      <button class="account-remove" data-action="remove" data-id="${id}"
+              title="${escapeHtml(labels.removeAccount || '')}">
+        <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+      </button>
     </div>
   `
 }
@@ -103,10 +106,9 @@ function removeHtml(account, multi) {
 function accountHtml(account, state) {
   return `
     <div class="account ${account.active ? 'active' : ''}">
-      ${state.multi ? headHtml(account) : ''}
+      ${headHtml(account)}
       ${account.expanded ? gaugesHtml(account.gauges) + troubleHtml(account) : ''}
       ${deliveryHtml(account, state.endpoint)}
-      ${removeHtml(account, state.multi)}
     </div>
   `
 }

@@ -295,12 +295,21 @@ function aggregateStatus(accounts, activeId) {
   return (active && active.status) || 'idle'
 }
 
-/** The display name of an account: the organization its reading came from. */
+/**
+ * The display name of an account: the organization its reading came from.
+ * claude.ai names a personal org "<email>'s Organization", which eats the whole
+ * width of a 320 px block header, so that suffix is dropped — unless dropping it
+ * would leave nothing, which means the name was only the suffix.
+ */
 function organizationName(orgs, orgId) {
   if (!Array.isArray(orgs)) return null
   const org = orgs.find(o => o && o.uuid === orgId)
   if (!org) return null
-  return typeof org.name === 'string' && org.name.trim() ? org.name.trim() : null
+  if (typeof org.name !== 'string' || !org.name.trim()) return null
+
+  const name = org.name.trim()
+  const stripped = name.replace(/['’]s Organi[sz]ation$/i, '').trim()
+  return stripped || name
 }
 
 function gaugeDetail(gauges) {
@@ -377,9 +386,12 @@ const MESSAGES = {
     panelRelogin: 'Log in again',
     panelAddAccount: 'Add an account',
     panelRemoveAccount: 'Remove this account',
-    panelExpand: 'Expand',
-    panelCollapse: 'Collapse',
+    panelActivate: 'Switch to this account',
     panelQuit: 'Quit',
+    removeConfirm: 'Remove {name}?',
+    removeConfirmDetail: 'This account’s claude.ai session will be wiped. You will have to log in again to follow it.',
+    removeConfirmOk: 'Remove',
+    removeConfirmCancel: 'Cancel',
     panelPending: 'pending',
     panelReset: 'reset {time}',
     configWindowTitle: 'claude-usage — settings',
@@ -438,9 +450,12 @@ const MESSAGES = {
     panelRelogin: 'Se reconnecter',
     panelAddAccount: 'Ajouter un compte',
     panelRemoveAccount: 'Retirer ce compte',
-    panelExpand: 'Déplier',
-    panelCollapse: 'Replier',
+    panelActivate: 'Basculer sur ce compte',
     panelQuit: 'Quitter',
+    removeConfirm: 'Retirer {name} ?',
+    removeConfirmDetail: 'La session claude.ai de ce compte sera effacée. Il faudra se reconnecter pour le suivre à nouveau.',
+    removeConfirmOk: 'Retirer',
+    removeConfirmCancel: 'Annuler',
     panelPending: 'en attente',
     panelReset: 'reset {time}',
     configWindowTitle: 'claude-usage — paramètres',
