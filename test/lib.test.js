@@ -465,3 +465,37 @@ describe('buildTooltip', () => {
     expect(buildTooltip([])).toBe('claude-usage')
   })
 })
+
+describe('resolveConfig — expandAll', () => {
+  it('defaults to collapsed', () => {
+    expect(resolveConfig(null, HOME).expandAll).toBe(false)
+  })
+
+  it('coerces whatever a hand-edited file holds into a boolean', () => {
+    expect(resolveConfig({ expandAll: true }, HOME).expandAll).toBe(true)
+    expect(resolveConfig({ expandAll: 'yes' }, HOME).expandAll).toBe(true)
+    expect(resolveConfig({ expandAll: 0 }, HOME).expandAll).toBe(false)
+  })
+})
+
+describe('account messages', () => {
+  it('carries the new account strings in both dictionaries', () => {
+    for (const language of ['en', 'fr']) {
+      for (const key of [
+        'noAccount', 'accountUnnamed', 'loginBusy',
+        'panelAddAccount', 'panelRemoveAccount', 'panelExpand', 'panelCollapse',
+        'trayAddAccount', 'trayRemoveAccount', 'configExpandAll', 'configExpandAllHint',
+      ]) {
+        expect(MESSAGES[language][key], `${language}.${key}`).toBeTruthy()
+      }
+    }
+  })
+
+  it('no longer carries the single-account logout strings', () => {
+    for (const language of ['en', 'fr']) {
+      expect(MESSAGES[language].loggedOut).toBeUndefined()
+      expect(MESSAGES[language].panelLogout).toBeUndefined()
+      expect(MESSAGES[language].trayLogout).toBeUndefined()
+    }
+  })
+})

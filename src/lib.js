@@ -5,6 +5,7 @@ const DEFAULT_CONFIG = {
   outputPath: '~/.claude-usage/usage.json',
   intervalMinutes: 5,
   endpoint: '', // empty = write the file only, post nothing
+  expandAll: false, // only the active account's block is expanded unless asked
 }
 
 /** Expand a leading `~` to the user's home directory. */
@@ -54,6 +55,9 @@ function resolveConfig(raw, homedir) {
     outputPathRaw: rawPath,
     intervalMinutes,
     endpoint: resolveEndpoint(source.endpoint),
+    // A checkbox cannot produce a bad value, and a hand-edited file must not
+    // break a reading over this one: whatever is there is coerced, never refused.
+    expandAll: Boolean(source.expandAll),
   }
 }
 
@@ -361,14 +365,20 @@ const MESSAGES = {
     trayAutostart: 'Start at login',
     trayQuit: 'Quit',
     traySettings: 'Settings…',
-    trayLogout: 'Log out',
-    loggedOut: 'Logged out — reconnect to resume readings',
+    trayAddAccount: 'Add an account…',
+    trayRemoveAccount: 'Remove the active account',
+    noAccount: 'No account — add one to start readings',
+    accountUnnamed: 'Unnamed account',
+    loginBusy: 'A login is already in progress on another account',
     panelEmpty: 'No reading yet',
     panelSync: 'Sync now',
     panelSettings: 'Settings',
     panelMinimize: 'Minimize',
     panelRelogin: 'Log in again',
-    panelLogout: 'Log out',
+    panelAddAccount: 'Add an account',
+    panelRemoveAccount: 'Remove this account',
+    panelExpand: 'Expand',
+    panelCollapse: 'Collapse',
     panelQuit: 'Quit',
     panelPending: 'pending',
     panelReset: 'reset {time}',
@@ -379,6 +389,8 @@ const MESSAGES = {
     configIntervalHint: 'Between 1 and 1440.',
     configOutputPath: 'Output file',
     configOutputPathHint: 'Where the JSON is written. A leading ~ is your home folder.',
+    configExpandAll: 'Expand every account',
+    configExpandAllHint: 'Show all the gauges at once. Otherwise only the active account is expanded.',
     configSave: 'Save',
     configCancel: 'Cancel',
     configInvalidEndpoint: 'Must be an http:// or https:// URL',
@@ -414,14 +426,20 @@ const MESSAGES = {
     trayAutostart: 'Lancer au démarrage',
     trayQuit: 'Quitter',
     traySettings: 'Paramètres…',
-    trayLogout: 'Déconnecter le compte',
-    loggedOut: 'Compte déconnecté — reconnecte-toi pour reprendre les relevés',
+    trayAddAccount: 'Ajouter un compte…',
+    trayRemoveAccount: 'Retirer le compte actif',
+    noAccount: 'Aucun compte — ajoutes-en un pour démarrer les relevés',
+    accountUnnamed: 'Compte sans nom',
+    loginBusy: 'Une connexion est déjà en cours sur un autre compte',
     panelEmpty: 'Pas encore de relevé',
     panelSync: 'Relever maintenant',
     panelSettings: 'Paramètres',
     panelMinimize: 'Réduire',
     panelRelogin: 'Se reconnecter',
-    panelLogout: 'Déconnecter le compte',
+    panelAddAccount: 'Ajouter un compte',
+    panelRemoveAccount: 'Retirer ce compte',
+    panelExpand: 'Déplier',
+    panelCollapse: 'Replier',
     panelQuit: 'Quitter',
     panelPending: 'en attente',
     panelReset: 'reset {time}',
@@ -432,6 +450,8 @@ const MESSAGES = {
     configIntervalHint: 'Entre 1 et 1440.',
     configOutputPath: 'Fichier de sortie',
     configOutputPathHint: 'Où écrire le JSON. Un ~ en tête désigne ton dossier personnel.',
+    configExpandAll: 'Déplier tous les comptes',
+    configExpandAllHint: 'Affiche toutes les jauges d’un coup. Sinon seul le compte actif est déplié.',
     configSave: 'Enregistrer',
     configCancel: 'Annuler',
     configInvalidEndpoint: 'Doit être une URL http:// ou https://',
