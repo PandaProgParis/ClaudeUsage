@@ -33,6 +33,8 @@ Every few minutes, quietly in the background:
 
 Click the tray icon and you get your gauges - session, weekly, per-model - without opening a browser.
 
+Several claude.ai accounts, a personal one and a work one for instance, are read side by side and switch with a click. See [Several accounts](#several-accounts).
+
 ## With Claude Agents
 
 <img src="docs/screenshots/screen-tasks-claude.png" alt="claude-agents: the gauges panel above the Windows tray">
@@ -97,12 +99,29 @@ Start-at-login is enabled on that first launch. Untick **Start at login** in the
 | Action | Result |
 |---|---|
 | Left click | The gauges panel: session (5 h), weekly, and one bar per model |
-| Right click | Sync now · Settings… · Log in again · Log out · Open the JSON folder / the config / the log · Start at login · Quit |
-| Hover | Last reading plus gauges, on one line |
+| Right click | Sync now · Settings… · Log in again · Add an account… · Remove the active account · Open the JSON folder / the config / the log · Start at login · Quit |
+| Hover | Last reading plus gauges, on one line - one line per account once you have several |
 
-The panel is a small floating window: drag it anywhere and it stays there, and it stays open until you close it (the minimize button in its corner, Escape, or another click on the tray icon). Its top line shows the time of the last reading, a gear that opens the settings window and a refresh button that spins while a reading is in progress. Resets beyond a day read in days (`5d 22h`). **Log in again** appears only when a reading fails; **Log out** forgets the claude.ai account (the saved session is wiped) and pauses readings until you reconnect.
+The panel is a small floating window: drag it anywhere and it stays there, and it stays open until you close it (the minimize button in its corner, Escape, or another click on the tray icon). Its top line shows the time of the last reading, a gear that opens the settings window and a refresh button that spins while a reading is in progress. Resets beyond a day read in days (`5d 22h`). **Log in again** appears only when a reading fails.
 
 The interface follows your system locale: French on a French desktop, English everywhere else.
+
+## Several accounts
+
+A personal account and a work one, without logging out and back in every time. **Add an account** opens a fresh claude.ai login in its own session, and the panel then shows one block per account.
+
+| What you see | What it means |
+|---|---|
+| One block per account, titled with its organization name | The one with a coloured dot is the active account |
+| A collapsed block, showing its percentages on one line | Enough to see which account still has room, without expanding it |
+| A click on a collapsed block's header | Expands it **and** makes that account the active one |
+| **Remove this account** inside a block | Wipes that account's saved session and drops the block |
+
+Each account keeps its own saved session, so both stay logged in. A session that expires marks only its own block **reconnect** and leaves the other account reading normally; the login window no longer opens by itself unless every account is logged out.
+
+**One thing to know if you use the output file.** It always holds the **active** account's payload, because that is what a single-account reader expects. Switching the active account rewrites it, so the dashboard or extension reading that file follows your switch. With one account, nothing changes: the panel looks and behaves exactly as it did before.
+
+Tick **Expand every account** in the settings to keep all the blocks open at once.
 
 ## Output
 
@@ -134,21 +153,25 @@ Anthropic changes this payload from time to time; the agent stores it verbatim r
 {
   "outputPath": "~/.claude-usage/usage.json",
   "intervalMinutes": 5,
-  "endpoint": ""
+  "endpoint": "",
+  "expandAll": false
 }
 ```
 
 | Key | Meaning |
 |---|---|
 | `outputPath` | Where to write the JSON. A leading `~` expands to your home directory. |
-| `intervalMinutes` | How often to take a reading. Clamped to 1–1440. |
+| `intervalMinutes` | How often to take a reading, for every account. Clamped to 1–1440. |
 | `endpoint` | Optional `http(s)` URL to `POST` the payload to after each write - a dashboard, a webhook, your own API. Empty disables it. |
+| `expandAll` | Keep every account block expanded. Otherwise only the active one is. |
 
 <img src="docs/screenshots/settings.png" alt="The settings window: upload URL, interval, output file">
 
-The same three settings are editable from the **Settings** window - the gear in the panel, or **Settings…** in the tray menu. It refuses an endpoint that is not an `http(s)` URL and an interval outside 1–1440 instead of silently correcting them.
+The same settings are editable from the **Settings** window - the gear in the panel, or **Settings…** in the tray menu. It refuses an endpoint that is not an `http(s)` URL and an interval outside 1–1440 instead of silently correcting them.
 
-**The file is reloaded live** - save it and the new path, interval and endpoint apply immediately, with a reading straight away. Invalid JSON is ignored and logged rather than allowed to reset your settings.
+Your accounts live next to that file, in `accounts.json`. The app manages it: there is nothing to edit there by hand.
+
+**The config file is reloaded live** - save it and the new path, interval and endpoint apply immediately, with a reading straight away. Invalid JSON is ignored and logged rather than allowed to reset your settings.
 
 A failed POST never invalidates a reading: the file on disk is the deliverable, the endpoint is a relay.
 
@@ -180,8 +203,8 @@ npm test             # unit tests (vitest)
 
 | Path | Role |
 |---|---|
-| `src/main.js` | Electron main process: hidden window, sync cycle, login, tray, autostart |
-| `src/lib.js` | Pure logic - config, organization choice, payload validation, gauges, translations. No Electron, no I/O, fully tested |
+| `src/main.js` | Electron main process: accounts, one hidden window each, sync cycle, login, tray, autostart |
+| `src/lib.js` | Pure logic - config, accounts, organization choice, payload validation, gauges, translations. No Electron, no I/O, fully tested |
 | `src/preload.js` | IPC bridge between the panel and the agent |
 | `src/panel.html` · `src/panel.js` | The gauges panel |
 | `src/config-preload.js` | IPC bridge between the settings window and the agent |
