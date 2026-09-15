@@ -1,10 +1,17 @@
-// Settings window renderer. Shows the three config keys, sends back what was
-// typed; main.js decides whether it is acceptable and tells us what to say.
+// Settings window renderer. Shows the config keys, sends back what was typed;
+// main.js decides whether it is acceptable and tells us what to say.
 
 const form = document.getElementById('form')
 const saveBtn = document.getElementById('save-btn')
 const cancelBtn = document.getElementById('cancel-btn')
 const formError = document.getElementById('form-error')
+
+// Outside `fields`: a checkbox has no error line because it cannot be invalid.
+const expandAll = {
+  input: document.getElementById('expand-all'),
+  label: document.getElementById('expand-all-label'),
+  hint: document.getElementById('expand-all-hint'),
+}
 
 const fields = {
   endpoint: {
@@ -51,6 +58,7 @@ function values() {
     endpoint: fields.endpoint.input.value,
     intervalMinutes: fields.intervalMinutes.input.value,
     outputPath: fields.outputPath.input.value,
+    expandAll: expandAll.input.checked,
   }
 }
 
@@ -61,12 +69,15 @@ window.settings.load().then(({ config, labels }) => {
   fields.intervalMinutes.hint.textContent = labels.intervalHint
   fields.outputPath.label.textContent = labels.outputPath
   fields.outputPath.hint.textContent = labels.outputPathHint
+  expandAll.label.textContent = labels.expandAll
+  expandAll.hint.textContent = labels.expandAllHint
   saveBtn.textContent = labels.save
   cancelBtn.textContent = labels.cancel
 
   fields.endpoint.input.value = config.endpoint
   fields.intervalMinutes.input.value = config.intervalMinutes
   fields.outputPath.input.value = config.outputPath
+  expandAll.input.checked = config.expandAll
 
   reportHeight()
   fields.endpoint.input.focus()

@@ -9,6 +9,7 @@ const electron = require('electron')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
+const crypto = require('crypto')
 
 // Some terminals (VS Code, Claude Code) export ELECTRON_RUN_AS_NODE=1, which
 // turns electron.exe into plain Node — `require('electron')` is then just a
@@ -26,7 +27,7 @@ if (typeof electron === 'string') {
   process.exit(0)
 }
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, screen, shell, ipcMain } = electron
+const { app, BrowserWindow, Tray, Menu, nativeImage, screen, shell, ipcMain, session } = electron
 
 const {
   createTranslator,
@@ -37,10 +38,15 @@ const {
   isAuthFailure,
   hasUsageShape,
   buildGauges,
+  partitionFor,
+  resolveAccounts,
+  summarizeGauges,
+  aggregateStatus,
+  organizationName,
+  buildTooltip,
 } = require('./lib.js')
 
 const CLAUDE_ORIGIN = 'https://claude.ai'
-const SESSION_PARTITION = 'persist:claudeai'
 const LOAD_TIMEOUT_MS = 30000
 const FETCH_TIMEOUT_MS = 20000
 const LOGIN_POLL_MS = 5000
@@ -58,34 +64,30 @@ const LOGIN_PAGE = CLAUDE_ORIGIN + '/login'
 // Replaced on ready: app.getLocale() is only meaningful from then on.
 let t = createTranslator('en')
 let appLocale = 'en'
-let config = { outputPath: '', intervalMinutes: 5, endpoint: '' }
-let workerWindow = null
+let config = { outputPath: '', intervalMinutes: 5, endpoint: '', expandAll: false }
 let panelWindow = null
 let configWindow = null
 let tray = null
 let syncTimer = null
-let loginTimer = null
 let isQuitting = false
-// Run id of the reading in flight, 0 when idle. startLogin and logout bump
-// syncGeneration, which makes any reading still awaiting a response stale.
-let syncing = 0
-let syncGeneration = 0
-// "Log out" clears the claude.ai session and leaves the site alone until the
-// user asks to reconnect — the timer must not pop the login window on its own.
-let loggedOut = false
 // Once the user has dragged the panel somewhere, it stays there.
 let panelMoved = false
 
+// One entry per claude.ai account, in panel order. Each carries its own hidden
+// window, its own reading state and its own hardening counters: a login on one
+// account must not make another's in-flight reading stale.
+let accounts = []
+let activeId = null
+// Only one login window at a time — two visible login pages and the user no
+// longer knows which account they are signing into.
+let loginOwner = null
+
+// Everything here is global to the agent; anything per-account lives on the
+// account itself and is recomposed by panelState() on every push.
 const state = {
-  status: 'idle', // idle | syncing | ok | error | login
-  message: '', // detailed status; the panel shows it only on error / login
-  headline: '', // "Read at 01:07" or "No reading yet" — the panel's title line
-  lastSync: null,
-  gauges: [],
   intervalMinutes: 5,
   autostart: false,
   endpoint: '',
-  delivery: null, // { status: 'ok' | 'error', message } once an endpoint is set
   labels: {},
 }
 
@@ -96,7 +98,10 @@ function panelLabels() {
     settings: t('panelSettings'),
     minimize: t('panelMinimize'),
     relogin: t('panelRelogin'),
-    logout: t('panelLogout'),
+    addAccount: t('panelAddAccount'),
+    removeAccount: t('panelRemoveAccount'),
+    expand: t('panelExpand'),
+    collapse: t('panelCollapse'),
     quit: t('panelQuit'),
     pending: t('panelPending'),
     reset: t('panelReset', { time: '{time}' }), // the panel fills {time} per gauge
@@ -111,6 +116,8 @@ function configLabels() {
     intervalHint: t('configIntervalHint'),
     outputPath: t('configOutputPath'),
     outputPathHint: t('configOutputPathHint'),
+    expandAll: t('configExpandAll'),
+    expandAllHint: t('configExpandAllHint'),
     save: t('configSave'),
     cancel: t('configCancel'),
   }
@@ -138,6 +145,83 @@ function configFilePath() {
   return path.join(app.getPath('userData'), 'config.json')
 }
 
+// --- Accounts ---
+
+function accountsFilePath() {
+  return path.join(app.getPath('userData'), 'accounts.json')
+}
+
+/**
+ * `null` covers both "no file yet" (an upgrade from a single-account version)
+ * and "unreadable file" — resolveAccounts turns either into the historical
+ * account, the only outcome that preserves a live claude.ai session.
+ */
+function readAccountsFile() {
+  try {
+    return JSON.parse(fs.readFileSync(accountsFilePath(), 'utf8'))
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      log('accounts.json unreadable (' + err.message + ') — falling back to the historical session')
+    }
+    return null
+  }
+}
+
+function writeAccountsFile() {
+  try {
+    fs.mkdirSync(path.dirname(accountsFilePath()), { recursive: true })
+    fs.writeFileSync(
+      accountsFilePath(),
+      JSON.stringify(
+        { activeId, accounts: accounts.map(a => ({ id: a.id, label: a.label, orgId: a.orgId })) },
+        null,
+        2
+      ),
+      'utf8'
+    )
+  } catch (err) {
+    log('accounts write failed: ' + err.message)
+  }
+}
+
+function createAccountState(record) {
+  return {
+    id: record.id,
+    label: record.label,
+    orgId: record.orgId,
+    window: null, // created lazily: an account is only ever read or logged into
+    status: 'idle',
+    message: t('noReading'),
+    headline: t('noReading'),
+    gauges: [],
+    lastSync: null,
+    delivery: null,
+    // The 1.0.1 hardening, now owned by the account instead of the module.
+    syncing: 0,
+    syncGeneration: 0,
+    loginTimer: null,
+  }
+}
+
+function loadAccounts() {
+  const resolved = resolveAccounts(readAccountsFile())
+  accounts = resolved.accounts.map(createAccountState)
+  activeId = resolved.activeId
+  log('accounts loaded — ' + accounts.length + ', active=' + (activeId || 'none'))
+}
+
+function findAccount(id) {
+  return accounts.find(a => a.id === id)
+}
+
+function activeAccount() {
+  return findAccount(activeId)
+}
+
+function accountName(account) {
+  return account.label || t('accountUnnamed')
+}
+
 function readConfigFile() {
   try {
     return { ok: true, raw: JSON.parse(fs.readFileSync(configFilePath(), 'utf8')) }
@@ -155,6 +239,7 @@ function writeConfigFile(values) {
         outputPath: values.outputPath,
         intervalMinutes: values.intervalMinutes,
         endpoint: values.endpoint,
+        expandAll: values.expandAll,
       },
       null,
       2
@@ -205,24 +290,28 @@ function applyConfig(next) {
   const previous = config
   config = next // always adopted: outputPathRaw may differ even when nothing effective does
 
-  const unchanged = next.outputPath === previous.outputPath &&
-    next.intervalMinutes === previous.intervalMinutes &&
-    next.endpoint === previous.endpoint
-  if (unchanged) return false
+  const readingChanged = next.outputPath !== previous.outputPath ||
+    next.intervalMinutes !== previous.intervalMinutes ||
+    next.endpoint !== previous.endpoint
+  if (!readingChanged && next.expandAll === previous.expandAll) return false
 
-  const intervalChanged = next.intervalMinutes !== previous.intervalMinutes
-  const endpointChanged = next.endpoint !== previous.endpoint
   log('config reloaded — output=' + config.outputPath + ' interval=' + config.intervalMinutes +
-    'min endpoint=' + (config.endpoint || 'none'))
+    'min endpoint=' + (config.endpoint || 'none') + ' expandAll=' + config.expandAll)
 
-  if (intervalChanged) scheduleSync()
-  setState({
-    intervalMinutes: config.intervalMinutes,
-    endpoint: config.endpoint,
-    // A delivery verdict belongs to the endpoint it was sent to.
-    delivery: config.endpoint && !endpointChanged ? state.delivery : null,
-  })
-  syncOnce()
+  // Folding blocks open or shut changes nothing on claude.ai's side: repaint,
+  // do not spend a reading on it.
+  if (!readingChanged) {
+    broadcast()
+    return true
+  }
+
+  if (next.intervalMinutes !== previous.intervalMinutes) scheduleSync()
+  // A delivery verdict belongs to the endpoint it was sent to.
+  if (next.endpoint !== previous.endpoint) {
+    for (const account of accounts) account.delivery = null
+  }
+  setState({ intervalMinutes: config.intervalMinutes, endpoint: config.endpoint })
+  syncAll()
   return true
 }
 
@@ -255,6 +344,7 @@ function saveConfig(raw) {
       outputPath: next.outputPathRaw,
       intervalMinutes: next.intervalMinutes,
       endpoint: next.endpoint,
+      expandAll: next.expandAll,
     })
   } catch (err) {
     log('config write failed: ' + err.message)
@@ -268,57 +358,101 @@ function saveConfig(raw) {
 
 // --- State broadcasting ---
 
+/**
+ * Everything the panel renders, composed on demand. Recomposing rather than
+ * keeping a second copy means the account list can never drift from `accounts`,
+ * and the panel can ask for the current state before the first reading.
+ */
+function panelState() {
+  const active = activeAccount()
+  return {
+    status: aggregateStatus(accounts, activeId),
+    headline: active ? active.headline : t('noAccount'),
+    // With a single account the panel renders exactly as it did in 1.0.1: no
+    // block header, no switch.
+    multi: accounts.length > 1,
+    accounts: accounts.map(account => ({
+      id: account.id,
+      name: accountName(account),
+      active: account.id === activeId,
+      expanded: config.expandAll || account.id === activeId,
+      status: account.status,
+      message: account.message,
+      gauges: account.gauges,
+      summary: summarizeGauges(account.gauges),
+      // The POST only ever concerns the account whose payload was written.
+      delivery: account.id === activeId ? account.delivery : null,
+    })),
+    intervalMinutes: state.intervalMinutes,
+    endpoint: state.endpoint,
+    autostart: state.autostart,
+    labels: state.labels,
+  }
+}
+
+function broadcast() {
+  if (panelWindow && !panelWindow.isDestroyed()) {
+    panelWindow.webContents.send('usage:state', panelState())
+  }
+  if (tray) tray.setToolTip(buildTooltip(accounts))
+}
+
 function setState(patch) {
   Object.assign(state, patch)
-  if (panelWindow && !panelWindow.isDestroyed()) {
-    panelWindow.webContents.send('usage:state', state)
-  }
-  updateTray()
+  broadcast()
 }
 
-function updateTray() {
-  if (!tray) return
-  const lines = ['claude-usage', state.message]
-  if (state.gauges.length > 0) {
-    lines.push(state.gauges.map(g => g.label.replace('Weekly — ', '') + ' ' + g.percent + '%').join(' · '))
-  }
-  tray.setToolTip(lines.join('\n'))
+function setAccountState(account, patch) {
+  Object.assign(account, patch)
+  broadcast()
 }
 
-// --- Worker window (hidden) ---
+// --- Worker windows (hidden, one per account) ---
 
-function createWorkerWindow() {
-  workerWindow = new BrowserWindow({
+/**
+ * A window's partition is fixed at creation and immutable afterwards, so every
+ * account needs its own window. Created on first use and then kept: the login
+ * flow reuses this very window, shown and hidden again, never recreated.
+ */
+function accountWindow(account) {
+  if (account.window && !account.window.isDestroyed()) return account.window
+
+  const win = new BrowserWindow({
     width: 1100,
     height: 820,
     show: false,
-    title: t('loginWindowTitle'),
+    title: t('loginWindowTitle') + ' — ' + accountName(account),
     autoHideMenuBar: true,
     icon: iconPath(),
     webPreferences: {
-      partition: SESSION_PARTITION,
+      partition: partitionFor(account.id),
       contextIsolation: true,
       nodeIntegration: false,
     },
   })
 
   // Closing the login window just hides it — the agent keeps running.
-  workerWindow.on('close', (event) => {
+  win.on('close', (event) => {
     if (isQuitting) return
     event.preventDefault()
-    workerWindow.hide()
+    win.hide()
+    onLoginWindowClosed(account)
   })
+
+  account.window = win
+  return win
 }
 
-function loadPage(url) {
+function loadPage(account, url) {
+  const win = accountWindow(account)
   return new Promise((resolve) => {
     let settled = false
     const finish = (ok) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      workerWindow.webContents.removeListener('did-finish-load', onLoad)
-      workerWindow.webContents.removeListener('did-fail-load', onFail)
+      win.webContents.removeListener('did-finish-load', onLoad)
+      win.webContents.removeListener('did-fail-load', onFail)
       resolve(ok)
     }
     const onLoad = () => finish(true)
@@ -326,9 +460,9 @@ function loadPage(url) {
     const onFail = (_event, code) => { if (code !== -3) finish(false) }
     const timer = setTimeout(() => finish(false), LOAD_TIMEOUT_MS)
 
-    workerWindow.webContents.on('did-finish-load', onLoad)
-    workerWindow.webContents.on('did-fail-load', onFail)
-    workerWindow.loadURL(url).catch(() => finish(false))
+    win.webContents.on('did-finish-load', onLoad)
+    win.webContents.on('did-fail-load', onFail)
+    win.loadURL(url).catch(() => finish(false))
   })
 }
 
@@ -338,7 +472,7 @@ function loadPage(url) {
  * raced against a timer — a page that navigates away mid-call never resolves
  * it, and an unresolved call would leave `syncing` stuck forever.
  */
-function pageFetch(pathname) {
+function pageFetch(account, pathname) {
   const script = [
     '(async () => {',
     '  try {',
@@ -359,7 +493,7 @@ function pageFetch(pathname) {
 
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(t('fetchTimeout', { path: pathname }))), FETCH_TIMEOUT_MS + 5000)
-    workerWindow.webContents.executeJavaScript(script, true).then(
+    accountWindow(account).webContents.executeJavaScript(script, true).then(
       (result) => {
         clearTimeout(timer)
         // status 0 is the script's own catch: aborted, or never connected.
@@ -375,15 +509,16 @@ function pageFetch(pathname) {
   })
 }
 
-async function ensureOnClaudeOrigin() {
-  if (workerWindow.webContents.getURL().startsWith(CLAUDE_ORIGIN)) return true
-  if (await loadPage(IDLE_PAGE)) return true
-  return loadPage(CLAUDE_ORIGIN + '/')
+async function ensureOnClaudeOrigin(account) {
+  if (accountWindow(account).webContents.getURL().startsWith(CLAUDE_ORIGIN)) return true
+  if (await loadPage(account, IDLE_PAGE)) return true
+  return loadPage(account, CLAUDE_ORIGIN + '/')
 }
 
-async function readCookie(name) {
+async function readCookie(account, name) {
   try {
-    const cookies = await workerWindow.webContents.session.cookies.get({ url: CLAUDE_ORIGIN, name })
+    const store = accountWindow(account).webContents.session.cookies
+    const cookies = await store.get({ url: CLAUDE_ORIGIN, name })
     return cookies.length > 0 ? cookies[0].value : null
   } catch {
     return null
@@ -391,8 +526,8 @@ async function readCookie(name) {
 }
 
 /** Never logged in vs. logged in once and dropped — the wording differs. */
-async function authFailureReason() {
-  return (await readCookie('sessionKey')) ? t('sessionExpired') : t('loginRequired')
+async function authFailureReason(account) {
+  return (await readCookie(account, 'sessionKey')) ? t('sessionExpired') : t('loginRequired')
 }
 
 // --- Output ---
@@ -433,61 +568,77 @@ function shortTime(date) {
 }
 
 /**
- * One reading. `manual` marks a click (panel or tray) as opposed to the timer:
- * a logged-out agent stays quiet on the timer, but a click means "get me back in".
+ * One reading, for one account. It never opens a login window by itself — that
+ * call belongs to syncAll, which can see whether any account is still working.
  */
-async function syncOnce({ manual = false } = {}) {
-  if (syncing || isQuitting || loginTimer) return
-  if (loggedOut) {
-    if (manual) startLogin(t('loginRequired'))
-    return
-  }
-  const run = ++syncGeneration
-  syncing = run
-  // The worker page is shared: a login or a logout navigates it from under
-  // us, and the response we were waiting for (or the 401 the wipe causes)
-  // then belongs to nobody. Checked after every await.
-  const stale = () => run !== syncGeneration
-  setState({ status: 'syncing', message: t('reading') })
+async function syncAccount(account) {
+  if (!account || account.syncing || isQuitting || account.loginTimer) return
+
+  const run = ++account.syncGeneration
+  account.syncing = run
+  // This account's page is shared with its own login flow: a login or a removal
+  // navigates or wipes it from under us, and the response we were waiting for
+  // (or the 401 the wipe causes) then belongs to nobody. Checked after every
+  // await, and scoped to this account so another account's login is harmless.
+  const stale = () => run !== account.syncGeneration
+  setAccountState(account, { status: 'syncing', message: t('reading') })
 
   try {
-    if (!(await ensureOnClaudeOrigin())) {
+    if (!(await ensureOnClaudeOrigin(account))) {
       throw new Error(t('unreachable'))
     }
     if (stale()) return
 
-    const orgs = await pageFetch('/api/organizations')
+    const orgs = await pageFetch(account, '/api/organizations')
     if (stale()) return
     if (isAuthFailure(orgs.status)) {
-      startLogin(await authFailureReason())
+      // No login window from here: with two accounts, an expired pro session
+      // would pop a login page in the user's face every interval while the
+      // perso one works. syncAll decides whether a blackout justifies it.
+      setAccountState(account, { status: 'login', message: await authFailureReason(account) })
       return
     }
     if (!Array.isArray(orgs.json)) {
       throw new Error(t('orgsResponded', { status: orgs.status }))
     }
 
-    const orgId = pickOrganization(orgs.json, await readCookie('lastActiveOrg'))
+    const orgId = pickOrganization(orgs.json, await readCookie(account, 'lastActiveOrg'))
     if (!orgId) throw new Error(t('noOrg'))
 
-    const usage = await pageFetch('/api/organizations/' + orgId + '/usage')
+    // The payload carries no account identity, so a block's name comes from the
+    // organizations listing — refreshed on every reading, it costs nothing.
+    const name = organizationName(orgs.json, orgId)
+    if (name && name !== account.label) {
+      account.label = name
+      writeAccountsFile()
+    }
+    account.orgId = orgId
+
+    const usage = await pageFetch(account, '/api/organizations/' + orgId + '/usage')
     if (stale()) return
     if (isAuthFailure(usage.status)) {
-      startLogin(await authFailureReason())
+      setAccountState(account, { status: 'login', message: await authFailureReason(account) })
       return
     }
     if (!hasUsageShape(usage.json)) {
       throw new Error(t('usageResponded', { status: usage.status }))
     }
 
-    writeOutput(usage.json)
+    // The file on disk is the active account's, by contract with Claude Agents.
+    const isActive = account.id === activeId
+    if (isActive) {
+      writeOutput(usage.json)
+      log('sync ok (' + account.id + ') -> ' + config.outputPath)
+    } else {
+      log('sync ok (' + account.id + ') — gauges only')
+    }
     const now = new Date().toISOString()
-    log('sync ok -> ' + config.outputPath)
 
-    const delivery = config.endpoint ? await postUsage(usage.json) : null
+    const delivery = isActive && config.endpoint ? await postUsage(usage.json) : null
     if (stale()) return
 
     const readAt = t('readAt', { time: shortTime(now) })
-    setState({
+    setAccountState(account, {
       status: 'ok',
       message: readAt,
       headline: readAt,
@@ -497,97 +648,194 @@ async function syncOnce({ manual = false } = {}) {
     })
   } catch (err) {
     if (stale()) return // an orphaned fetch timing out is not news
-    log('sync failed: ' + err.message)
-    setState({ status: 'error', message: t('failed', { error: err.message }) })
+    log('sync failed (' + account.id + '): ' + err.message)
+    setAccountState(account, { status: 'error', message: t('failed', { error: err.message }) })
   } finally {
-    if (syncing === run) syncing = 0
+    if (account.syncing === run) account.syncing = 0
   }
 }
 
-/** Any reading in flight is now meaningless; let the next one start at once. */
-function abandonReading() {
-  syncGeneration++
-  syncing = 0
+/**
+ * One pass over every account, in panel order and strictly sequential: two
+ * logins hitting claude.ai at once buys nothing and doubles the live renderers.
+ * A failing account does not interrupt the pass — each block carries its own
+ * status, which is what lets a healthy perso account survive an expired pro one.
+ */
+async function syncAll() {
+  if (isQuitting || accounts.length === 0) return
+
+  for (const account of accounts) {
+    await syncAccount(account)
+    if (isQuitting) return
+  }
+
+  // A single-account agent that is logged out is useless, so it still opens the
+  // login window by itself — exactly the 1.0.1 behaviour. With several accounts,
+  // only a total blackout justifies stealing the user's focus.
+  if (!loginOwner && accounts.every(a => a.status === 'login')) {
+    startLogin(activeAccount() || accounts[0], t('loginRequired'))
+  }
+}
+
+/** Any reading in flight on this account is meaningless; let the next one start. */
+function abandonReading(account) {
+  account.syncGeneration++
+  account.syncing = 0
 }
 
 function scheduleSync() {
   if (syncTimer) clearInterval(syncTimer)
-  syncTimer = setInterval(() => syncOnce(), config.intervalMinutes * 60 * 1000)
+  syncTimer = setInterval(() => syncAll(), config.intervalMinutes * 60 * 1000)
 }
 
 // --- Login flow ---
 
-function startLogin(reason) {
-  if (loginTimer) {
-    // Already waiting on the login window: just bring it back to the front.
-    workerWindow.show()
-    workerWindow.focus()
+function startLogin(account, reason) {
+  if (!account) return
+  if (account.loginTimer) {
+    // Already waiting on this account: just bring its window back to the front.
+    const open = accountWindow(account)
+    open.show()
+    open.focus()
     return
   }
-  loggedOut = false
-  abandonReading()
-  log('login required: ' + reason)
-  setState({ status: 'login', message: t('loginPrompt', { reason }) })
+  if (loginOwner && loginOwner !== account.id) {
+    // Refused rather than queued: two visible login pages and the user no longer
+    // knows which account they are signing into.
+    setAccountState(account, { status: 'login', message: t('loginBusy') })
+    return
+  }
 
-  loadPage(LOGIN_PAGE).then(() => {
-    if (isQuitting || !loginTimer) return
-    workerWindow.show()
-    workerWindow.focus()
+  loginOwner = account.id
+  abandonReading(account)
+  log('login required (' + account.id + '): ' + reason)
+  setAccountState(account, { status: 'login', message: t('loginPrompt', { reason }) })
+
+  const win = accountWindow(account)
+  loadPage(account, LOGIN_PAGE).then(() => {
+    if (isQuitting || !account.loginTimer) return
+    win.show()
+    win.focus()
   })
 
   // One probe at a time, and a probe only counts for the poll that sent it:
-  // a logout (or quit) while it was out must not be undone by its answer.
+  // a removal (or quit) while it was out must not be undone by its answer.
   let probing = false
   const timer = setInterval(async () => {
     if (isQuitting || probing) return
     probing = true
     try {
-      const probe = await pageFetch('/api/organizations')
-      if (loginTimer === timer && Array.isArray(probe.json)) finishLogin()
+      const probe = await pageFetch(account, '/api/organizations')
+      if (account.loginTimer === timer && Array.isArray(probe.json)) finishLogin(account)
     } catch {
     } finally {
       probing = false
     }
   }, LOGIN_POLL_MS)
-  loginTimer = timer
+  account.loginTimer = timer
 }
 
-function finishLogin() {
-  if (!loginTimer) return
-  clearInterval(loginTimer)
-  loginTimer = null
-  workerWindow.hide()
-  log('login ok')
-  setState({ status: 'idle', message: t('loggedIn') })
-  loadPage(IDLE_PAGE).then(() => syncOnce())
+function cancelLogin(account) {
+  if (account.loginTimer) {
+    clearInterval(account.loginTimer)
+    account.loginTimer = null
+  }
+  if (loginOwner === account.id) loginOwner = null
+}
+
+function finishLogin(account) {
+  if (!account.loginTimer) return
+  cancelLogin(account)
+  if (account.window && !account.window.isDestroyed()) account.window.hide()
+  log('login ok (' + account.id + ')')
+  setAccountState(account, { status: 'idle', message: t('loggedIn') })
+  loadPage(account, IDLE_PAGE).then(async () => {
+    // This account first, so the panel reacts at once, then catch up the others.
+    await syncAccount(account)
+    syncAll()
+  })
 }
 
 /**
- * Forget the claude.ai account: wipe the partition (cookies and all) and stop
- * reading until the user reconnects. The JSON already on disk is left alone.
+ * A login window closed by hand. An account that never got a name means the user
+ * abandoned an "add an account" attempt: keeping it would leave an empty block
+ * behind on every try.
  */
-async function logout() {
-  loggedOut = true
-  abandonReading()
-  if (loginTimer) {
-    clearInterval(loginTimer)
-    loginTimer = null
+function onLoginWindowClosed(account) {
+  const abandoned = Boolean(account.loginTimer) && !account.label
+  cancelLogin(account)
+  if (abandoned) {
+    log('add-account abandoned — dropping ' + account.id)
+    // Out of the close handler before destroying the window it fired on.
+    setImmediate(() => removeAccount(account.id))
+    return
   }
-  workerWindow.hide()
+  broadcast()
+}
+
+// --- Adding, switching and removing accounts ---
+
+/** 8 hex characters: this names a Chromium partition, so it stays filesystem-safe. */
+function newAccountId() {
+  return crypto.randomBytes(4).toString('hex')
+}
+
+function addAccount() {
+  if (loginOwner) {
+    // One login at a time: bring the open one back rather than start a second.
+    const owner = findAccount(loginOwner)
+    if (owner) startLogin(owner, t('loginRequired'))
+    return
+  }
+  const account = createAccountState({ id: newAccountId(), label: null, orgId: null })
+  accounts.push(account)
+  activeId = account.id // a fresh account is the one the user is looking at
+  writeAccountsFile()
+  log('adding account ' + account.id)
+  startLogin(account, t('loginRequired'))
+}
+
+function activateAccount(id) {
+  const account = findAccount(id)
+  if (!account || account.id === activeId) return
+  activeId = id
+  writeAccountsFile()
+  log('active account -> ' + id)
+  broadcast()
+  // The output file belongs to the active account, so the switch must rewrite it.
+  syncAccount(account)
+}
+
+/**
+ * Forget an account: wipe its partition, drop its window, remove its block. This
+ * replaces 1.0.x's "log out" — reconnecting is one click on "add an account", so
+ * a second, nearly identical gesture was not worth its code.
+ */
+async function removeAccount(id) {
+  const account = findAccount(id)
+  if (!account) return
+
+  cancelLogin(account)
+  abandonReading(account)
+  accounts = accounts.filter(a => a.id !== id)
+  if (activeId === id) activeId = accounts.length > 0 ? accounts[0].id : null
+  writeAccountsFile()
+
   try {
-    await workerWindow.webContents.session.clearStorageData()
-    log('logged out — claude.ai session cleared')
+    if (account.window && !account.window.isDestroyed()) {
+      await account.window.webContents.session.clearStorageData()
+      account.window.destroy()
+    } else {
+      // Never opened this run, but its cookies are still on disk.
+      await session.fromPartition(partitionFor(id)).clearStorageData()
+    }
+    log('account removed — ' + id)
   } catch (err) {
-    log('logout failed: ' + err.message)
+    log('account removal failed (' + id + '): ' + err.message)
   }
-  setState({
-    status: 'login',
-    message: t('loggedOut'),
-    headline: t('noReading'),
-    lastSync: null,
-    gauges: [],
-    delivery: null,
-  })
+
+  broadcast()
+  if (activeId) syncAccount(activeAccount())
 }
 
 // --- Autostart ---
@@ -647,11 +895,12 @@ function buildTrayMenu() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: t('trayGauges'), click: showPanel },
     { type: 'separator' },
-    { label: t('traySync'), click: () => syncOnce({ manual: true }) },
+    { label: t('traySync'), click: () => syncAll() },
     { label: t('traySettings'), click: () => openConfigWindow() },
     { type: 'separator' },
-    { label: t('trayRelogin'), click: () => startLogin(t('reconnectRequested')) },
-    { label: t('trayLogout'), click: () => logout() },
+    { label: t('trayRelogin'), click: () => startLogin(activeAccount(), t('reconnectRequested')) },
+    { label: t('trayAddAccount'), click: () => addAccount() },
+    { label: t('trayRemoveAccount'), enabled: Boolean(activeId), click: () => removeAccount(activeId) },
     { type: 'separator' },
     { label: t('trayOpenJson'), click: () => shell.showItemInFolder(config.outputPath) },
     { label: t('trayOpenConfig'), click: () => shell.openPath(configFilePath()) },
@@ -672,7 +921,7 @@ function createTray() {
   const icon = nativeImage.createFromPath(iconPath())
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon.resize({ width: 16, height: 16 }))
   buildTrayMenu()
-  updateTray()
+  tray.setToolTip(buildTooltip(accounts))
   tray.on('click', togglePanel)
 }
 
@@ -825,7 +1074,7 @@ function closeConfigWindow() {
 function quit() {
   isQuitting = true
   if (syncTimer) clearInterval(syncTimer)
-  if (loginTimer) clearInterval(loginTimer)
+  for (const account of accounts) cancelLogin(account)
   fs.unwatchFile(configFilePath())
   app.quit()
 }
@@ -833,10 +1082,14 @@ function quit() {
 // --- IPC ---
 
 function registerIpc() {
-  ipcMain.handle('usage:get-state', () => state)
-  ipcMain.on('usage:sync', () => syncOnce({ manual: true }))
-  ipcMain.on('usage:relogin', () => startLogin(t('reconnectRequested')))
-  ipcMain.on('usage:logout', () => logout())
+  ipcMain.handle('usage:get-state', () => panelState())
+  ipcMain.on('usage:sync', () => syncAll())
+  ipcMain.on('usage:relogin', (_event, id) => {
+    startLogin(id ? findAccount(id) : activeAccount(), t('reconnectRequested'))
+  })
+  ipcMain.on('usage:activate', (_event, id) => activateAccount(id))
+  ipcMain.on('usage:add-account', () => addAccount())
+  ipcMain.on('usage:remove-account', (_event, id) => removeAccount(id))
   ipcMain.on('usage:open-settings', () => openConfigWindow())
   ipcMain.on('usage:quit', quit)
   ipcMain.on('usage:hide', () => panelWindow && panelWindow.hide())
@@ -850,6 +1103,7 @@ function registerIpc() {
       endpoint: config.endpoint,
       intervalMinutes: config.intervalMinutes,
       outputPath: config.outputPathRaw, // as written in the file, `~` included
+      expandAll: config.expandAll,
     },
     labels: configLabels(),
   }))
@@ -886,24 +1140,25 @@ if (!app.requestSingleInstanceLock()) {
     log('starting — output=' + config.outputPath + ' interval=' + config.intervalMinutes +
       'min endpoint=' + (config.endpoint || 'none') + ' autostart=' + isAutostartEnabled())
 
+    // Before createAccountState: its labels come from the translator.
+    loadAccounts()
+    writeAccountsFile() // materialise the file on a first run, as config.json does
+
     Object.assign(state, {
       intervalMinutes: config.intervalMinutes,
       endpoint: config.endpoint,
       autostart: isAutostartEnabled(),
-      message: t('noReading'),
-      headline: t('noReading'),
       labels: panelLabels(),
     })
 
     registerIpc()
-    createWorkerWindow()
-    createPanel()
+    createPanel() // worker windows are created per account, on first use
     createTray()
 
     // A fresh install starts with Windows, as asked; the tray menu can undo it.
     if (isFirstRun) setAutostart(true)
 
-    syncOnce()
+    syncAll()
     scheduleSync()
     watchConfig()
   })

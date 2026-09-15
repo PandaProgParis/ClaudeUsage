@@ -93,13 +93,7 @@
       gap: 5px;
     }
 
-    /* Gauges */
-    #gauge-list {
-      display: flex;
-      flex-direction: column;
-      gap: 5px;
-    }
-
+    /* Gauges — spacing comes from the .account block that holds them */
     .gauge { display: flex; flex-direction: column; gap: 1px; line-height: 1.25; }
 
     .gauge-header {
@@ -139,6 +133,56 @@
       color: #b0aca6;
       text-align: center;
       padding: 6px 0;
+    }
+
+    /* Accounts */
+    #account-list { display: flex; flex-direction: column; gap: 6px; }
+
+    .account { display: flex; flex-direction: column; gap: 5px; }
+
+    /* Separator between stacked accounts, never above the first one */
+    .account + .account { padding-top: 6px; border-top: 1px solid #f0eeeb; }
+
+    .account-head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      background: none;
+      border: none;
+      font-family: inherit;
+      padding: 0;
+      width: 100%;
+      text-align: left;
+    }
+
+    .account-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #ddd9d4;
+      flex-shrink: 0;
+    }
+
+    .account.active .account-dot { background: #d97757; }
+
+    .account-name {
+      font-size: 11px;
+      font-weight: 600;
+      color: #5c5650;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .account-head:hover .account-name { color: #1a1a1a; }
+
+    .account-summary {
+      margin-left: auto;
+      font-size: 10px;
+      color: #b0aca6;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
 
     /* Status pill — only shown when something needs the user */
@@ -269,25 +313,12 @@
       </div>
     </div>
 
-    <div id="gauge-list"></div>
-
-    <div id="status" class="status-bar" hidden>
-      <div class="status-dot"></div>
-      <span class="status-text" id="status-text"></span>
-    </div>
-
-    <div id="delivery" class="delivery" hidden>
-      <span class="delivery-dot"></span>
-      <span id="delivery-text"></span>
-    </div>
-
-    <button id="login-btn" class="btn btn-secondary" hidden>
-      <svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-      <span id="login-label"></span>
-    </button>
+    <!-- One block per account, built by panel.js: the status pill, the reconnect
+         button and the delivery line all live inside the block they belong to. -->
+    <div id="account-list"></div>
 
     <div class="footer-links">
-      <button class="link danger" id="logout-btn"></button>
+      <button class="link" id="add-account-btn"></button>
       <button class="link" id="quit-btn"></button>
     </div>
   </div>

@@ -53,6 +53,11 @@
 
     #interval { width: 110px; }
 
+    /* A checkbox reads as one line, label beside the box, not above it. */
+    .field-check { flex-direction: row; align-items: center; gap: 8px; }
+    .field-check input { width: auto; margin: 0; }
+    .field-check label { font-weight: 600; }
+
     .hint {
       font-size: 11px;
       color: #8b8580;
@@ -123,6 +128,14 @@
       <input id="output-path" type="text" spellcheck="false" autocomplete="off">
       <div class="hint" id="output-path-hint"></div>
       <div class="error" id="output-path-error" hidden></div>
+    </div>
+
+    <div class="field">
+      <div class="field field-check">
+        <input id="expand-all" type="checkbox">
+        <label for="expand-all" id="expand-all-label"></label>
+      </div>
+      <div class="hint" id="expand-all-hint"></div>
     </div>
 
     <div class="error" id="form-error" hidden></div>
