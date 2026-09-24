@@ -13,6 +13,18 @@ const expandAll = {
   hint: document.getElementById('expand-all-hint'),
 }
 
+const notify = {
+  input: document.getElementById('notify'),
+  label: document.getElementById('notify-label'),
+  hint: document.getElementById('notify-hint'),
+}
+
+const notifySound = {
+  input: document.getElementById('notify-sound'),
+  label: document.getElementById('notify-sound-label'),
+  hint: document.getElementById('notify-sound-hint'),
+}
+
 const fields = {
   endpoint: {
     input: document.getElementById('endpoint'),
@@ -36,9 +48,9 @@ const fields = {
 
 function reportHeight() {
   // The window is sized to the form, so it fits whichever language is shown.
-  requestAnimationFrame(() => {
-    window.settings.reportHeight(document.documentElement.offsetHeight)
-  })
+  // Measured at once, like the panel: offsetHeight forces the layout, and the
+  // window stays throttled, as Chromium throttles any hidden page.
+  window.settings.reportHeight(document.documentElement.offsetHeight)
 }
 
 function showProblems(problems) {
@@ -59,6 +71,8 @@ function values() {
     intervalMinutes: fields.intervalMinutes.input.value,
     outputPath: fields.outputPath.input.value,
     expandAll: expandAll.input.checked,
+    notify: notify.input.checked,
+    notifySound: notifySound.input.checked,
   }
 }
 
@@ -71,6 +85,10 @@ window.settings.load().then(({ config, labels }) => {
   fields.outputPath.hint.textContent = labels.outputPathHint
   expandAll.label.textContent = labels.expandAll
   expandAll.hint.textContent = labels.expandAllHint
+  notify.label.textContent = labels.notify
+  notify.hint.textContent = labels.notifyHint
+  notifySound.label.textContent = labels.notifySound
+  notifySound.hint.textContent = labels.notifySoundHint
   saveBtn.textContent = labels.save
   cancelBtn.textContent = labels.cancel
 
@@ -78,10 +96,23 @@ window.settings.load().then(({ config, labels }) => {
   fields.intervalMinutes.input.value = config.intervalMinutes
   fields.outputPath.input.value = config.outputPath
   expandAll.input.checked = config.expandAll
+  notify.input.checked = config.notify
+  notifySound.input.checked = config.notifySound
+  // The sound belongs to the notification: muting something that never fires
+  // is a control that lies about what it does.
+  syncSoundAvailability()
 
   reportHeight()
   fields.endpoint.input.focus()
 })
+
+/** No notification, no sound to choose. */
+function syncSoundAvailability() {
+  notifySound.input.disabled = !notify.input.checked
+  notifySound.label.classList.toggle('disabled', !notify.input.checked)
+}
+
+notify.input.addEventListener('change', syncSoundAvailability)
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault()

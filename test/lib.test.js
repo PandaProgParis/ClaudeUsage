@@ -11,13 +11,19 @@ import {
   hasUsageShape,
   formatResetTime,
   buildGauges,
+  USER_DATA_FOLDER,
   MIGRATED_ACCOUNT_ID,
   partitionFor,
+  orphanPartitionDirs,
   resolveAccounts,
+  accountsFileTrusted,
   summarizeGauges,
   aggregateStatus,
   organizationName,
   buildTooltip,
+  diffGaugeAlerts,
+  pickCountdown,
+  buildSummary,
 } from '../src/lib.js'
 
 const HOME = 'C:/Users/tester'
@@ -277,7 +283,7 @@ describe('buildGauges', () => {
 
     expect(gauges.map(g => [g.label, g.percent, g.reset])).toEqual([
       ['Session (5h)', 37, '2h00'],
-      ['Weekly — All models', 8, ''],
+      ['Weekly - All models', 8, ''],
     ])
   })
 
@@ -290,8 +296,8 @@ describe('buildGauges', () => {
     }, now)
 
     expect(gauges).toEqual([
-      { key: 'weekly_scoped_Opus 5', label: 'Weekly — Opus 5', color: '#FFB74D', percent: 64, reset: '' },
-      { key: 'weekly_scoped_Sonnet 5', label: 'Weekly — Sonnet 5', color: '#64B5F6', percent: 12, reset: '' },
+      { key: 'weekly_scoped_Opus 5', label: 'Weekly - Opus 5', color: '#FFB74D', percent: 64, reset: '', resetAt: null },
+      { key: 'weekly_scoped_Sonnet 5', label: 'Weekly - Sonnet 5', color: '#64B5F6', percent: 12, reset: '', resetAt: null },
     ])
   })
 
@@ -324,14 +330,81 @@ describe('buildGauges', () => {
   })
 })
 
+describe('USER_DATA_FOLDER', () => {
+  it('stays the folder 1.0.x installs keep their sessions in', () => {
+    // productName became "Claude Usage"; following it would log every user out.
+    expect(USER_DATA_FOLDER).toBe('claude-usage')
+  })
+})
+
 describe('partitionFor', () => {
   it('maps the migrated account onto the historical partition', () => {
     // Renaming this partition would log every existing user out.
     expect(partitionFor(MIGRATED_ACCOUNT_ID)).toBe('persist:claudeai')
+    // ...and the orphan cleanup finds its folder by that same name.
+    expect(orphanPartitionDirs(['claudeai'], [MIGRATED_ACCOUNT_ID])).toEqual([])
   })
 
   it('suffixes any other account', () => {
     expect(partitionFor('7f3a9c21')).toBe('persist:claudeai-7f3a9c21')
+  })
+})
+
+describe('orphanPartitionDirs', () => {
+  it('returns the session folders no account owns', () => {
+    const dirs = ['claudeai', 'claudeai-2ed186e1', 'claudeai-4c261bb5', 'claudeai-b945f98b']
+    expect(orphanPartitionDirs(dirs, ['b945f98b', '2ed186e1'])).toEqual(['claudeai', 'claudeai-4c261bb5'])
+  })
+
+  it('keeps the historical folder while the migrated account exists', () => {
+    expect(orphanPartitionDirs(['claudeai', 'claudeai-7f3a9c21'], ['default'])).toEqual(['claudeai-7f3a9c21'])
+  })
+
+  it('never touches a folder that is not one of ours', () => {
+    const dirs = ['other-app', 'claudeai-x y', 'claudeaix', 'claudeai-', '']
+    expect(orphanPartitionDirs(dirs, [])).toEqual([])
+  })
+
+  it('only knows the folder names this app ever created', () => {
+    expect(orphanPartitionDirs(['claudeai-1', 'claudeai-pro', 'claudeai-4c261bb5x'], [])).toEqual([])
+  })
+
+  it('compares names the way Windows does, ignoring case', () => {
+    expect(orphanPartitionDirs(['ClaudeAI-7F3A9C21'], ['7f3a9c21'])).toEqual([])
+  })
+
+  it('disowns every session once the last account is gone', () => {
+    expect(orphanPartitionDirs(['claudeai', 'claudeai-7f3a9c21'], [])).toEqual(['claudeai', 'claudeai-7f3a9c21'])
+  })
+
+  it('survives garbage', () => {
+    expect(orphanPartitionDirs(null, null)).toEqual([])
+    expect(orphanPartitionDirs(['claudeai-4c261bb5', 42, null], [null, '', 7])).toEqual(['claudeai-4c261bb5'])
+  })
+})
+
+describe('accountsFileTrusted', () => {
+  it('trusts the file the app writes', () => {
+    expect(accountsFileTrusted({
+      activeId: 'b945f98b',
+      accounts: [{ id: 'b945f98b', label: 'A', orgId: null }, { id: '2ed186e1', label: null, orgId: null }],
+    })).toBe(true)
+  })
+
+  it('trusts an empty list: the last account was removed', () => {
+    expect(accountsFileTrusted({ activeId: null, accounts: [] })).toBe(true)
+  })
+
+  it('distrusts anything without an account list', () => {
+    for (const raw of [null, undefined, [1, 2, 3], {}, { accounts: 'x' }, 'text', 42]) {
+      expect(accountsFileTrusted(raw)).toBe(false)
+    }
+  })
+
+  it('distrusts a list that lost an entry on the way in', () => {
+    for (const accounts of [[{ id: 'b945f98b' }, { id: 42 }], [{ id: '' }], [{ id: 'a' }, { id: 'a' }], [null]]) {
+      expect(accountsFileTrusted({ accounts })).toBe(false)
+    }
   })
 })
 
@@ -462,10 +535,10 @@ describe('buildTooltip', () => {
       id: 'default',
       label: 'Perso',
       message: 'Read at 01:07',
-      gauges: [{ label: 'Session (5h)', percent: 17 }, { label: 'Weekly — Fable', percent: 23 }],
+      gauges: [{ label: 'Session (5h)', percent: 17 }, { label: 'Weekly - Fable', percent: 23 }],
     }]
     expect(buildTooltip(accounts)).toBe(
-      'claude-usage\nRead at 01:07\nSession (5h) 17% · Fable 23%'
+      'Claude Usage\nRead at 01:07\nSession (5h) 17% · Fable 23%'
     )
   })
 
@@ -474,19 +547,19 @@ describe('buildTooltip', () => {
       { id: 'default', label: 'Perso', message: 'Read at 01:07', gauges: [{ label: 'Session (5h)', percent: 17 }] },
       { id: 'b', label: 'Matchem', message: 'Session expired', gauges: [] },
     ]
-    expect(buildTooltip(accounts)).toBe('claude-usage\nPerso — 17%\nMatchem — Session expired')
+    expect(buildTooltip(accounts)).toBe('Claude Usage\nPerso - 17%\nMatchem - Session expired')
   })
 
   it('survives an account with no label and no reading', () => {
-    expect(buildTooltip([{ id: 'b', label: null, message: '', gauges: [] }])).toBe('claude-usage')
+    expect(buildTooltip([{ id: 'b', label: null, message: '', gauges: [] }])).toBe('Claude Usage')
   })
 
   it('names the app when there is no account', () => {
-    expect(buildTooltip([])).toBe('claude-usage')
+    expect(buildTooltip([])).toBe('Claude Usage')
   })
 })
 
-describe('resolveConfig — expandAll', () => {
+describe('resolveConfig - expandAll', () => {
   it('defaults to collapsed', () => {
     expect(resolveConfig(null, HOME).expandAll).toBe(false)
   })
@@ -518,5 +591,145 @@ describe('account messages', () => {
       expect(MESSAGES[language].panelLogout).toBeUndefined()
       expect(MESSAGES[language].trayLogout).toBeUndefined()
     }
+  })
+})
+
+describe('buildGauges - resetAt', () => {
+  it('carries the raw reset timestamp beside the formatted one', () => {
+    const now = Date.parse('2026-09-16T09:00:00Z')
+    const gauges = buildGauges({
+      five_hour: { utilization: 3, resets_at: '2026-09-16T12:27:00Z' },
+      seven_day: { utilization: 46, resets_at: null },
+    }, now, 'fr')
+
+    expect(gauges[0].resetAt).toBe(Date.parse('2026-09-16T12:27:00Z'))
+    expect(gauges[0].reset).toBe('3h27')
+    // A null reset must not become NaN: the countdown picker compares these.
+    expect(gauges[1].resetAt).toBe(null)
+  })
+})
+
+describe('diffGaugeAlerts', () => {
+  const gauge = (key, percent) => ({ key, label: key, percent, reset: '3h27', resetAt: 1 })
+
+  it('fires when a gauge crosses into 100% and when it comes back', () => {
+    const before = [gauge('five_hour', 98)]
+    const full = [gauge('five_hour', 100)]
+
+    expect(diffGaugeAlerts(before, full).exhausted.map(g => g.key)).toEqual(['five_hour'])
+    expect(diffGaugeAlerts(before, full).restored).toEqual([])
+
+    expect(diffGaugeAlerts(full, before).restored.map(g => g.key)).toEqual(['five_hour'])
+    expect(diffGaugeAlerts(full, before).exhausted).toEqual([])
+  })
+
+  it('stays silent while a gauge sits at 100%', () => {
+    const full = [gauge('five_hour', 100)]
+    expect(diffGaugeAlerts(full, full)).toEqual({ exhausted: [], restored: [] })
+  })
+
+  it('says nothing about a gauge that was not there before', () => {
+    // The first reading of a session, and a weekly_scoped gauge that only
+    // appears once that model has been used: neither crossed anything.
+    expect(diffGaugeAlerts([], [gauge('five_hour', 100)]).exhausted).toEqual([])
+    expect(diffGaugeAlerts(null, [gauge('five_hour', 100)]).exhausted).toEqual([])
+    expect(diffGaugeAlerts(undefined, undefined)).toEqual({ exhausted: [], restored: [] })
+  })
+
+  it('reports every gauge that crossed, not just the first', () => {
+    const before = [gauge('five_hour', 90), gauge('seven_day', 100), gauge('weekly_scoped_Fable', 99)]
+    const after = [gauge('five_hour', 100), gauge('seven_day', 4), gauge('weekly_scoped_Fable', 100)]
+    const alerts = diffGaugeAlerts(before, after)
+
+    expect(alerts.exhausted.map(g => g.key)).toEqual(['five_hour', 'weekly_scoped_Fable'])
+    expect(alerts.restored.map(g => g.key)).toEqual(['seven_day'])
+  })
+
+  it('ignores a gauge that disappears', () => {
+    expect(diffGaugeAlerts([gauge('weekly_scoped_Fable', 100)], []))
+      .toEqual({ exhausted: [], restored: [] })
+  })
+})
+
+describe('pickCountdown', () => {
+  const gauge = (key, percent, reset, resetAt) => ({ key, label: key, percent, reset, resetAt })
+
+  it('takes the session reset while nothing is full', () => {
+    expect(pickCountdown([
+      gauge('seven_day', 46, '4j 16h', 500),
+      gauge('five_hour', 3, '3h27', 100),
+    ])).toBe('3h27')
+  })
+
+  it('takes the furthest full gauge - the one that unblocks last', () => {
+    // The session resets in 3h27 but the weekly is full: coming back in 3h27
+    // buys nothing, the account is blocked until the weekly resets.
+    expect(pickCountdown([
+      gauge('five_hour', 100, '3h27', 100),
+      gauge('seven_day', 100, '4j 16h', 500),
+      gauge('weekly_scoped_Fable', 47, '4j 16h', 500),
+    ])).toBe('4j 16h')
+  })
+
+  it('prefers a full gauge over a session that still has room', () => {
+    expect(pickCountdown([
+      gauge('five_hour', 3, '3h27', 100),
+      gauge('seven_day', 100, '4j 16h', 500),
+    ])).toBe('4j 16h')
+  })
+
+  it('has nothing to say without gauges or without a session', () => {
+    expect(pickCountdown([])).toBe('')
+    expect(pickCountdown(null)).toBe('')
+    expect(pickCountdown([gauge('seven_day', 46, '4j 16h', 500)])).toBe('')
+  })
+
+  it('ignores a full gauge whose reset is unknown', () => {
+    expect(pickCountdown([
+      gauge('five_hour', 12, '3h27', 100),
+      gauge('seven_day', 100, '', null),
+    ])).toBe('3h27')
+  })
+})
+
+describe('buildSummary', () => {
+  const gauge = (key, percent) => ({ key, label: key, percent, reset: '3h27', resetAt: 100 })
+
+  it('flags the full gauges so the panel can paint them red', () => {
+    expect(buildSummary([gauge('five_hour', 100), gauge('seven_day', 60)])).toEqual({
+      countdown: '3h27',
+      values: [
+        { percent: 100, exhausted: true },
+        { percent: 60, exhausted: false },
+      ],
+    })
+  })
+
+  it('is empty without gauges', () => {
+    expect(buildSummary([])).toEqual({ countdown: '', values: [] })
+    expect(buildSummary(null)).toEqual({ countdown: '', values: [] })
+  })
+})
+
+describe('resolveConfig - notifications', () => {
+  it('defaults both notifications on', () => {
+    const cfg = resolveConfig({}, HOME)
+    expect(cfg.notify).toBe(true)
+    expect(cfg.notifySound).toBe(true)
+  })
+
+  it('lets a hand-edited file turn either off', () => {
+    const cfg = resolveConfig({ notify: false, notifySound: false }, HOME)
+    expect(cfg.notify).toBe(false)
+    expect(cfg.notifySound).toBe(false)
+  })
+
+  it('coerces anything else rather than refusing it', () => {
+    // Same treatment as expandAll: a checkbox cannot produce a bad value, and a
+    // hand-edited file must not break a reading over this one.
+    expect(resolveConfig({ notify: 0 }, HOME).notify).toBe(false)
+    expect(resolveConfig({ notify: 'yes' }, HOME).notify).toBe(true)
+    const form = { endpoint: '', intervalMinutes: 5, outputPath: '~/usage.json' }
+    expect(configProblems({ ...form, notify: 'nonsense' })).toEqual([])
   })
 })

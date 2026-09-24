@@ -38,13 +38,13 @@ function gaugesHtml(gauges) {
         <div class="gauge-track">
           <div class="gauge-fill" style="width:${g.percent}%; background:${escapeHtml(g.color)}"></div>
         </div>
-        <span class="gauge-value">${g.percent}%</span>
+        <span class="gauge-value${g.percent >= 100 ? ' exhausted' : ''}">${g.percent}%</span>
       </div>
     </div>
   `).join('')
 }
 
-/** Host only — the full endpoint would swamp a 320px panel. */
+/** Host only - the full endpoint would swamp a 320px panel. */
 function hostOf(url) {
   try {
     return new URL(url).host
@@ -91,7 +91,7 @@ function troubleHtml(account) {
 
 /**
  * A brand new account waiting on its login window. No name, no reading, nothing
- * worth a header or an empty gauge list — just what the user has to do next.
+ * worth a header or an empty gauge list - just what the user has to do next.
  */
 function pendingHtml(account) {
   return `
@@ -106,17 +106,40 @@ function pendingHtml(account) {
 
 /**
  * The block header: name on the left, the remove button on the right. Always
- * shown, even for a lone account — hiding it there left no way to remove that
+ * shown, even for a lone account - hiding it there left no way to remove that
  * account at all. The active block is not a switch target, so it carries no
  * data-action and does not pretend to be clickable.
  */
+/**
+ * The collapsed block's one line: the countdown that says when the account is
+ * usable again, then one percentage per gauge, the full ones in red. It arrives
+ * structured from main.js precisely because parts of it are coloured - a joined
+ * string could not say which.
+ */
+function summaryHtml(account) {
+  const summary = account.summary || { countdown: '', values: [] }
+  if (summary.values.length === 0) {
+    const fallback = escapeHtml(account.message || '')
+    return fallback ? `<span class="account-summary">${fallback}</span>` : ''
+  }
+
+  const countdown = summary.countdown
+    ? `<span class="summary-countdown" title="${escapeHtml((labels.countdown || '{time}').replace('{time}', summary.countdown))}">${escapeHtml(summary.countdown)}</span>`
+    : ''
+  const values = summary.values
+    .map(v => `<span class="${v.exhausted ? 'exhausted' : ''}">${v.percent}%</span>`)
+    .join('<span class="summary-sep">·</span>')
+
+  return `<span class="account-summary">${countdown}${values}</span>`
+}
+
 function headHtml(account) {
   const id = escapeHtml(account.id)
   const switchable = account.active ? '' : ` data-action="activate" data-id="${id}"`
   const title = account.active ? '' : escapeHtml(labels.activate || '')
-  const summary = account.expanded
-    ? ''
-    : `<span class="account-summary">${escapeHtml(account.summary || account.message || '')}</span>`
+  // The expanded block already prints a reset per gauge; the summary is what
+  // the collapsed one would otherwise lack entirely.
+  const summary = account.expanded ? '' : summaryHtml(account)
   return `
     <div class="account-head">
       <button class="account-switch"${switchable} title="${title}">
@@ -203,9 +226,10 @@ function render(state) {
     : accounts.map(a => (a.pending ? pendingHtml(a) : accountHtml(a, state))).join('')
 
   // The panel sizes itself to its content; main.js resizes the window in place.
-  requestAnimationFrame(() => {
-    window.agent.reportHeight(document.body.offsetHeight)
-  })
+  // Measured at once, not in a requestAnimationFrame: reading offsetHeight
+  // forces the layout, and rAF never fires in a hidden window, which is where
+  // most renders happen now that the panel is throttled like any other.
+  window.agent.reportHeight(document.body.offsetHeight)
 }
 
 // Delegated: the blocks are rebuilt on every state push, and the CSP forbids

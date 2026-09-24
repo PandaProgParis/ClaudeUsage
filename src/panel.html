@@ -5,7 +5,7 @@
   <!-- The panel is entirely local: no remote script, style, image or fetch. -->
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'">
-  <title>claude-usage</title>
+  <title>Claude Usage</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -115,7 +115,7 @@
     /* A pending block stacked under real accounts keeps its own breathing room. */
     .account.pending .empty-state { padding: 8px 0 2px; }
 
-    /* Gauges — spacing comes from the .account block that holds them */
+    /* Gauges - spacing comes from the .account block that holds them */
     .gauge { display: flex; flex-direction: column; gap: 1px; line-height: 1.25; }
 
     .gauge-header {
@@ -149,6 +149,12 @@
       min-width: 30px;
       text-align: right;
     }
+
+    /* A full quota, in the panel's error red. The bar itself keeps the model's
+       colour - repainting it would cost the only cue that tells Fable from
+       All models at a glance. */
+    .gauge-value.exhausted,
+    .account-summary .exhausted { color: #d94444; }
 
     .gauges-empty {
       font-size: 11px;
@@ -194,7 +200,25 @@
       flex-shrink: 0;
     }
 
-    .account.active .account-dot { background: #d97757; }
+    /* The account being read right now: green, so the panel says which session
+       is live without a word. It breathes three times when a push lands (every
+       render rebuilds the dot), then rests. An endless box-shadow pulse repaints
+       on every display frame for as long as the panel is on screen, and the
+       panel stays open on blur: measured at about a quarter of a core. */
+    .account.active .account-dot {
+      background: #3fa65f;
+      animation: account-pulse 2.4s ease-in-out 3;
+    }
+
+    @keyframes account-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(63, 166, 95, 0.55); }
+      50% { box-shadow: 0 0 0 4px rgba(63, 166, 95, 0); }
+    }
+
+    /* A pulse is decoration; it must not fight someone who asked for stillness. */
+    @media (prefers-reduced-motion: reduce) {
+      .account.active .account-dot { animation: none; }
+    }
 
     .account-name {
       font-size: 11px;
@@ -209,12 +233,30 @@
 
     .account-summary {
       margin-left: auto;
+      display: flex;
+      align-items: baseline;
+      gap: 3px;
       font-size: 10px;
       color: #b0aca6;
       white-space: nowrap;
       flex-shrink: 0;
       padding-left: 6px;
     }
+
+    /* When the account is usable again. First, because it is the reason the
+       collapsed line is worth reading at all once a quota is full. */
+    .summary-countdown {
+      color: #8b8580;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .summary-countdown::after {
+      content: '·';
+      margin-left: 3px;
+      color: #ccc7c1;
+    }
+
+    .summary-sep { color: #ccc7c1; }
 
     .account-remove {
       width: 18px;
@@ -243,7 +285,7 @@
       stroke-linejoin: round;
     }
 
-    /* Status pill — only shown when something needs the user */
+    /* Status pill - only shown when something needs the user */
     .status-bar {
       display: flex;
       align-items: center;

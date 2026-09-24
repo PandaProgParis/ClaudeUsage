@@ -88,9 +88,9 @@ jobs:
 
           | File | For |
           |---|---|
-          | `claude-usage-*-setup.exe` | Windows installer — **recommended**, a stable path means reliable start-at-login |
-          | `claude-usage-*-portable.exe` | Windows, no install — put it somewhere permanent before enabling start-at-login |
-          | `claude-usage-*.dmg` | macOS, Intel + Apple Silicon |
+          | `claude-usage-*-setup.exe` | Windows installer - **recommended**, a stable path means reliable start-at-login |
+          | `claude-usage-*-portable.exe` | Windows, no install - put it somewhere permanent before enabling start-at-login |
+          | `claude-usage-*-x64.dmg` · `claude-usage-*-arm64.dmg` | macOS, Intel or Apple Silicon |
 
           ## These binaries are unsigned
 
@@ -98,14 +98,14 @@ jobs:
           project does not have one. Windows SmartScreen and macOS Gatekeeper
           will warn you on first launch.
 
-          - **Windows** — *More info* → *Run anyway*.
-          - **macOS** — right-click the app → *Open*, or
+          - **Windows** - *More info* → *Run anyway*.
+          - **macOS** - right-click the app → *Open*, or
             `xattr -dr com.apple.quarantine /Applications/claude-usage.app`.
 
           ## Verify before you trust
 
           You do not have to take my word for any of this. Every file here was
-          built by GitHub Actions from the tagged commit — not on my machine —
+          built by GitHub Actions from the tagged commit - not on my machine -
           and carries a signed provenance attestation:
 
           ```

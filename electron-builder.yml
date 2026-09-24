@@ -1,16 +1,44 @@
 appId: com.pandaprog.claude-usage
-# Keep productName lowercase: it decides the userData folder name
-# (%APPDATA%/claude-usage), which holds the saved claude.ai session.
-productName: claude-usage
+# The name people see: Start menu, installed apps, Task Manager, the macOS app.
+# It no longer decides the userData folder - main.js pins that one to
+# %APPDATA%/claude-usage, where every existing install keeps its claude.ai session.
+productName: Claude Usage
 copyright: Copyright © 2026 Cyril
 
 directories:
   output: dist
 
-# No runtime dependency — the app is the files in src/ plus the Electron runtime.
+# No runtime dependency - the app is the files in src/ plus the Electron runtime.
 files:
   - src/**/*
   - package.json
+
+# Chromium locale packs: 55 of them weigh ~40 MB, extracted again to %TEMP% at
+# every launch of the portable build. Kept: the app's own English and French,
+# plus the languages claude.ai itself speaks. A system whose language has no
+# pack here resolves to en-US, and the claude.ai login page, whose language
+# follows Accept-Language, turns English with it.
+# en-US is Chromium's last-resort fallback and must stay (a bare "en" would
+# delete it). en-GB is what non-US English systems resolve to. fr also serves
+# fr-CA, fr-BE. On macOS the same list prunes .lproj folders, spelt with an
+# underscore there (en_GB, es_419, pt_BR), hence both spellings.
+# A language added to MESSAGES in lib.js must be added here too.
+electronLanguages:
+  - en-US
+  - en-GB
+  - en_GB
+  - fr
+  - de
+  - es
+  - es-419
+  - es_419
+  - it
+  - ja
+  - ko
+  - pt-BR
+  - pt_BR
+  - hi
+  - id
 
 win:
   target:
@@ -21,16 +49,21 @@ win:
       arch:
         - x64
   icon: src/icon.png
+  # The file names stay what 1.0.3 and earlier installed: the installer finds a
+  # running agent by its exe name before replacing it, the install folder keeps
+  # its name, and the start-at-login entry points at this very path.
+  executableName: claude-usage
 
 nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
-  shortcutName: claude-usage
-  artifactName: ${productName}-${version}-setup.${ext}
+  # An update renames the old lowercase "claude-usage" shortcut rather than adding one.
+  shortcutName: Claude Usage
+  artifactName: claude-usage-${version}-setup.${ext}
 
 portable:
-  artifactName: ${productName}-${version}-portable.${ext}
+  artifactName: claude-usage-${version}-portable.${ext}
 
 mac:
   target:
@@ -39,7 +72,16 @@ mac:
         - x64
         - arm64
   icon: src/icon.png
+  # The bundle stays claude-usage.app, as for Windows above: dragging the new
+  # version into /Applications replaces the old one instead of adding a twin
+  # that shares its bundle id, its single-instance lock and its login item.
+  # Finder and the menu bar still read "Claude Usage" (CFBundleName).
+  executableName: claude-usage
   category: public.app-category.developer-tools
   # A tray-only app has no windows of its own to show at launch.
   extendInfo:
     LSUIElement: true
+
+dmg:
+  # Release file names stay lowercase and space-free on every platform.
+  artifactName: claude-usage-${version}-${arch}.${ext}

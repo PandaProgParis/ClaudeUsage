@@ -19,5 +19,5 @@ jobs:
       - run: npm ci
 
       # lib.js is deliberately free of Electron and I/O, so the suite runs
-      # anywhere — no display, no runtime download.
+      # anywhere - no display, no runtime download.
       - run: npm test

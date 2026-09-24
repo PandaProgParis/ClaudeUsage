@@ -1,4 +1,4 @@
-// Pure logic for the claude-usage agent — no Electron, no fs, no network.
+// Pure logic for the Claude Usage agent - no Electron, no fs, no network.
 // Everything here is unit-tested in test/lib.test.js.
 
 const DEFAULT_CONFIG = {
@@ -6,6 +6,8 @@ const DEFAULT_CONFIG = {
   intervalMinutes: 5,
   endpoint: '', // empty = write the file only, post nothing
   expandAll: false, // only the active account's block is expanded unless asked
+  notify: true, // a desktop notification when a quota fills up, and when it frees again
+  notifySound: true, // that notification's system sound
 }
 
 /** Expand a leading `~` to the user's home directory. */
@@ -58,6 +60,10 @@ function resolveConfig(raw, homedir) {
     // A checkbox cannot produce a bad value, and a hand-edited file must not
     // break a reading over this one: whatever is there is coerced, never refused.
     expandAll: Boolean(source.expandAll),
+    // Absent means the default, which is *on* here - Boolean(undefined) alone
+    // would silence a fresh install's notifications.
+    notify: source.notify == null ? DEFAULT_CONFIG.notify : Boolean(source.notify),
+    notifySound: source.notifySound == null ? DEFAULT_CONFIG.notifySound : Boolean(source.notifySound),
   }
 }
 
@@ -72,7 +78,7 @@ function configProblems(raw) {
   const problems = []
 
   // Absent means "no upload"; anything else must be a string, and a non-empty
-  // one must be an http(s) URL — the same rule as outputPath below.
+  // one must be an http(s) URL - the same rule as outputPath below.
   if (source.endpoint != null && typeof source.endpoint !== 'string') {
     problems.push('endpoint')
   } else if (typeof source.endpoint === 'string' && source.endpoint.trim() && !resolveEndpoint(source.endpoint)) {
@@ -90,16 +96,50 @@ function configProblems(raw) {
   return problems
 }
 
+// --- Identity ---
+
+// What the user reads: tray tooltip, window titles. productName says the same
+// thing to the OS (Start menu, installed apps, Task Manager).
+const APP_NAME = 'Claude Usage'
+
+// The userData folder every install since 1.0.0 keeps its claude.ai sessions in.
+// Electron derives userData from productName, which is no longer this string,
+// so main.js pins it here - letting it follow productName logs everyone out.
+const USER_DATA_FOLDER = 'claude-usage'
+
 // --- Accounts ---
 
 // The partition every 1.0.x install already holds its claude.ai session in. The
-// `default` account id maps onto it so an upgrade does not log anyone out — same
-// gravity as renaming productName.
+// `default` account id maps onto it so an upgrade does not log anyone out - same
+// gravity as USER_DATA_FOLDER.
 const DEFAULT_PARTITION = 'persist:claudeai'
 const MIGRATED_ACCOUNT_ID = 'default'
 
 function partitionFor(id) {
   return id === MIGRATED_ACCOUNT_ID ? DEFAULT_PARTITION : DEFAULT_PARTITION + '-' + id
+}
+
+// Electron keeps a `persist:<name>` session in userData/Partitions/<name>. Only
+// the names this app ever creates match: `claudeai` for the migrated account,
+// `claudeai-` plus newAccountId()'s 8 hex characters for every other one.
+const PARTITION_DIR = /^claudeai(-[0-9a-f]{8})?$/i
+
+/**
+ * The Partitions/ folders no account owns any more. Removing an account wipes
+ * its cookies but cannot delete the folder of a session still open, and an
+ * abandoned add-account attempt leaves one too: measured at 13 to 22 MB each.
+ * Only a folder named like ours is ever a candidate, and the comparison
+ * ignores case, as Windows does. The caller must only act on it with an
+ * accounts.json that accountsFileTrusted() accepts.
+ */
+function orphanPartitionDirs(dirNames, accountIds) {
+  const owned = new Set(
+    (Array.isArray(accountIds) ? accountIds : [])
+      .filter(id => typeof id === 'string' && id)
+      .map(id => partitionFor(id).slice('persist:'.length).toLowerCase())
+  )
+  return (Array.isArray(dirNames) ? dirNames : [])
+    .filter(name => typeof name === 'string' && PARTITION_DIR.test(name) && !owned.has(name.toLowerCase()))
 }
 
 function cleanString(value) {
@@ -139,6 +179,18 @@ function resolveAccounts(raw) {
     : accounts.length > 0 ? accounts[0].id : null
 
   return { activeId, accounts }
+}
+
+/**
+ * Whether accounts.json, as parsed, may be taken at its word by the orphan
+ * cleanup: an object holding an account list that resolveAccounts keeps whole.
+ * A missing, unreadable or listless file falls back to a list that would
+ * disown live sessions, and an entry dropped on the way in (bad id, duplicate)
+ * means this is not a file the app wrote.
+ */
+function accountsFileTrusted(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !Array.isArray(raw.accounts)) return false
+  return resolveAccounts(raw).accounts.length === raw.accounts.length
 }
 
 /**
@@ -184,10 +236,10 @@ function hasUsageShape(payload) {
 // `limitKind` reads the gauge from the `limits[]` array when the top-level key is absent
 const GAUGE_CONFIG = [
   { key: 'five_hour', limitKind: 'session', label: 'Session (5h)', color: '#D4956A' },
-  { key: 'seven_day', limitKind: 'weekly_all', label: 'Weekly — All models', color: '#64B5F6' },
-  { key: 'seven_day_sonnet', label: 'Weekly — Sonnet', color: '#8BB8E0' },
-  { key: 'seven_day_opus', label: 'Weekly — Opus', color: '#FFB74D' },
-  { key: 'seven_day_cowork', label: 'Weekly — Cowork', color: '#81C784' },
+  { key: 'seven_day', limitKind: 'weekly_all', label: 'Weekly - All models', color: '#64B5F6' },
+  { key: 'seven_day_sonnet', label: 'Weekly - Sonnet', color: '#8BB8E0' },
+  { key: 'seven_day_opus', label: 'Weekly - Opus', color: '#FFB74D' },
+  { key: 'seven_day_cowork', label: 'Weekly - Cowork', color: '#81C784' },
 ]
 
 const MODEL_COLORS = {
@@ -222,7 +274,7 @@ function scopedGauges(payload) {
       if (!label) return null
       return {
         key: `weekly_scoped_${label}`,
-        label: `Weekly — ${label}`,
+        label: `Weekly - ${label}`,
         color: modelColor(label),
         data: { utilization: l.percent, resets_at: l.resets_at },
       }
@@ -248,6 +300,13 @@ function formatResetTime(isoDate, now = Date.now(), language = 'en') {
   return h % 24 ? `${days} ${h % 24}h` : days
 }
 
+/** The reset instant as a number, or null - `null` and a malformed date alike. */
+function resetTimestamp(isoDate) {
+  if (!isoDate) return null
+  const at = new Date(isoDate).getTime()
+  return Number.isFinite(at) ? at : null
+}
+
 /**
  * Flatten a usage payload into render-ready gauges, so the panel renderer
  * stays a dumb view over this list.
@@ -269,7 +328,77 @@ function buildGauges(payload, now = Date.now(), language = 'en') {
       color: g.color,
       percent: Math.min(Math.max(Math.round(g.data.utilization), 0), 100),
       reset: formatResetTime(g.data.resets_at, now, language),
+      // The formatted string cannot be compared; pickCountdown has to know
+      // which of two full gauges frees the account last.
+      resetAt: resetTimestamp(g.data.resets_at),
     }))
+}
+
+// --- Quota alerts ---
+
+// claude.ai reports a utilization percentage; buildGauges rounds and clamps it,
+// so a full quota is exactly 100 and nothing can sit above it.
+const EXHAUSTED_PERCENT = 100
+
+function isExhausted(gauge) {
+  return Boolean(gauge) && gauge.percent >= EXHAUSTED_PERCENT
+}
+
+/**
+ * What crossed between two readings of the *same* account. A gauge with no
+ * previous entry is deliberately silent: that covers the first reading after a
+ * launch (every gauge is new, and announcing a quota that was already full at
+ * boot would be noise) and a `weekly_scoped` gauge that only appears once its
+ * model has been used. A gauge already at 100% cannot re-fire either - it is
+ * re-armed only by coming back down, so an oscillation at the boundary cannot
+ * spam, and no debounce is needed.
+ */
+function diffGaugeAlerts(previous, next) {
+  const before = new Map(
+    (Array.isArray(previous) ? previous : []).filter(Boolean).map(g => [g.key, g])
+  )
+  const alerts = { exhausted: [], restored: [] }
+
+  for (const gauge of (Array.isArray(next) ? next : []).filter(Boolean)) {
+    const was = before.get(gauge.key)
+    if (!was) continue
+    if (!isExhausted(was) && isExhausted(gauge)) alerts.exhausted.push(gauge)
+    else if (isExhausted(was) && !isExhausted(gauge)) alerts.restored.push(gauge)
+  }
+
+  return alerts
+}
+
+/**
+ * The one countdown a collapsed block is worth showing: how long until the
+ * account is usable again. A full gauge wins over an empty one - a session that
+ * resets in 3 h frees nothing while the weekly is at 100% - and among the full
+ * ones, the furthest reset, since that is the one that unblocks last. Nothing
+ * full: the session, the only limit that moves on a human timescale.
+ */
+function pickCountdown(gauges) {
+  const list = (Array.isArray(gauges) ? gauges : []).filter(Boolean)
+  const full = list.filter(g => isExhausted(g) && g.resetAt != null)
+
+  if (full.length > 0) {
+    return full.reduce((furthest, g) => (g.resetAt > furthest.resetAt ? g : furthest)).reset || ''
+  }
+
+  const session = list.find(g => g.key === 'five_hour')
+  return (session && session.reset) || ''
+}
+
+/**
+ * The collapsed block's one line, structured rather than joined: the panel has
+ * to paint the full percentages red, which a single string cannot express. The
+ * tray tooltip keeps summarizeGauges - plain text by nature.
+ */
+function buildSummary(gauges) {
+  const list = (Array.isArray(gauges) ? gauges : []).filter(Boolean)
+  return {
+    countdown: pickCountdown(list),
+    values: list.map(g => ({ percent: g.percent, exhausted: isExhausted(g) })),
+  }
 }
 
 // --- Account presentation ---
@@ -298,7 +427,7 @@ function aggregateStatus(accounts, activeId) {
 /**
  * The display name of an account: the organization its reading came from.
  * claude.ai names a personal org "<email>'s Organization", which eats the whole
- * width of a 320 px block header, so that suffix is dropped — unless dropping it
+ * width of a 320 px block header, so that suffix is dropped - unless dropping it
  * would leave nothing, which means the name was only the suffix.
  */
 function organizationName(orgs, orgId) {
@@ -314,28 +443,28 @@ function organizationName(orgs, orgId) {
 
 function gaugeDetail(gauges) {
   return (Array.isArray(gauges) ? gauges : [])
-    .map(g => `${String(g.label || '').replace('Weekly — ', '')} ${g.percent}%`)
+    .map(g => `${String(g.label || '').replace('Weekly - ', '')} ${g.percent}%`)
     .join(' · ')
 }
 
 /**
  * Tray tooltip. With one account it stays as detailed as it was in 1.0.x; with
- * several, one line per account answers the only question worth hovering for —
+ * several, one line per account answers the only question worth hovering for -
  * which one still has room.
  */
 function buildTooltip(accounts) {
   const list = Array.isArray(accounts) ? accounts.filter(Boolean) : []
-  if (list.length === 0) return 'claude-usage'
+  if (list.length === 0) return APP_NAME
 
   if (list.length === 1) {
     const only = list[0]
-    return ['claude-usage', only.message, gaugeDetail(only.gauges)].filter(Boolean).join('\n')
+    return [APP_NAME, only.message, gaugeDetail(only.gauges)].filter(Boolean).join('\n')
   }
 
-  return ['claude-usage'].concat(list.map(account => {
+  return [APP_NAME].concat(list.map(account => {
     const name = account.label || account.id
     const summary = summarizeGauges(account.gauges)
-    return `${name} — ${summary || account.message || ''}`.trim()
+    return `${name} - ${summary || account.message || ''}`.trim()
   })).join('\n')
 }
 
@@ -354,8 +483,8 @@ const MESSAGES = {
     sessionExpired: 'Session expired',
     loginRequired: 'Login required',
     reconnectRequested: 'Reconnection requested',
-    loginPrompt: '{reason} — log in from the window',
-    loggedIn: 'Logged in — reading…',
+    loginPrompt: '{reason} - log in from the window',
+    loggedIn: 'Logged in - reading…',
     sent: 'Sent',
     sendFailed: 'Send failed: {error}',
     unreachable: 'claude.ai unreachable',
@@ -364,7 +493,7 @@ const MESSAGES = {
     orgsResponded: '/api/organizations answered {status}',
     noOrg: 'no organization on this account',
     usageResponded: '/usage answered {status} with no usable data',
-    loginWindowTitle: 'claude-usage — sign in',
+    loginWindowTitle: 'Claude Usage - sign in',
     trayGauges: 'Show gauges',
     traySync: 'Sync now',
     trayRelogin: 'Log in again…',
@@ -392,7 +521,13 @@ const MESSAGES = {
     panelQuit: 'Quit',
     panelPending: 'pending',
     panelReset: 'reset {time}',
-    configWindowTitle: 'claude-usage — settings',
+    panelCountdown: 'Usable again in {time}',
+    notifyExhaustedTitle: '{account} : quota exhausted',
+    notifyExhaustedBody: '{gauge}\nFull - back in {time}',
+    notifyExhaustedBodyUnknown: '{gauge}\nFull',
+    notifyRestoredTitle: '{account} : quota back',
+    notifyRestoredBody: '{gauge}\nDown to {percent}%',
+    configWindowTitle: 'Claude Usage - settings',
     configEndpoint: 'Upload URL',
     configEndpointHint: 'The JSON is POSTed to this http(s) address after each reading. Empty: write the file only.',
     configInterval: 'Interval (minutes)',
@@ -401,6 +536,10 @@ const MESSAGES = {
     configOutputPathHint: 'Where the JSON is written. A leading ~ is your home folder.',
     configExpandAll: 'Expand every account',
     configExpandAllHint: 'Show all the gauges at once. Otherwise only the active account is expanded.',
+    configNotify: 'Notify me',
+    configNotifyHint: 'A desktop notification when a quota fills up, and when it frees again.',
+    configNotifySound: 'Notification sound',
+    configNotifySoundHint: 'Uses the system notification sound. Unchecked, the notification stays silent.',
     configSave: 'Save',
     configCancel: 'Cancel',
     configInvalidEndpoint: 'Must be an http:// or https:// URL',
@@ -416,8 +555,8 @@ const MESSAGES = {
     sessionExpired: 'Session expirée',
     loginRequired: 'Connexion requise',
     reconnectRequested: 'Reconnexion demandée',
-    loginPrompt: '{reason} — connecte-toi dans la fenêtre',
-    loggedIn: 'Connecté — relevé en cours…',
+    loginPrompt: '{reason} - connecte-toi dans la fenêtre',
+    loggedIn: 'Connecté - relevé en cours…',
     sent: 'Envoyé',
     sendFailed: 'Envoi échoué : {error}',
     unreachable: 'claude.ai injoignable',
@@ -426,7 +565,7 @@ const MESSAGES = {
     orgsResponded: '/api/organizations a répondu {status}',
     noOrg: 'aucune organisation sur ce compte',
     usageResponded: '/usage a répondu {status} sans données exploitables',
-    loginWindowTitle: 'claude-usage — connexion',
+    loginWindowTitle: 'Claude Usage - connexion',
     trayGauges: 'Voir les jauges',
     traySync: 'Relever maintenant',
     trayRelogin: 'Se reconnecter…',
@@ -454,7 +593,13 @@ const MESSAGES = {
     panelQuit: 'Quitter',
     panelPending: 'en attente',
     panelReset: 'reset {time}',
-    configWindowTitle: 'claude-usage — paramètres',
+    panelCountdown: 'De nouveau utilisable dans {time}',
+    notifyExhaustedTitle: '{account} : quota épuisé',
+    notifyExhaustedBody: '{gauge}\n100% - revient dans {time}',
+    notifyExhaustedBodyUnknown: '{gauge}\n100%',
+    notifyRestoredTitle: '{account} : quota revenu',
+    notifyRestoredBody: '{gauge}\nRedescendu à {percent}%',
+    configWindowTitle: 'Claude Usage - paramètres',
     configEndpoint: 'URL d’envoi',
     configEndpointHint: 'Le JSON est envoyé en POST à cette adresse http(s) après chaque relevé. Vide : le fichier seulement.',
     configInterval: 'Intervalle (minutes)',
@@ -463,6 +608,10 @@ const MESSAGES = {
     configOutputPathHint: 'Où écrire le JSON. Un ~ en tête désigne ton dossier personnel.',
     configExpandAll: 'Déplier tous les comptes',
     configExpandAllHint: 'Affiche toutes les jauges d’un coup. Sinon seul le compte actif est déplié.',
+    configNotify: 'Me prévenir',
+    configNotifyHint: 'Une notification du bureau quand un quota se remplit, et quand il se libère.',
+    configNotifySound: 'Son de la notification',
+    configNotifySoundHint: 'Utilise le son de notification du système. Décoché, la notification reste muette.',
     configSave: 'Enregistrer',
     configCancel: 'Annuler',
     configInvalidEndpoint: 'Doit être une URL http:// ou https://',
@@ -501,9 +650,13 @@ module.exports = {
   resolveConfig,
   resolveEndpoint,
   configProblems,
+  APP_NAME,
+  USER_DATA_FOLDER,
   MIGRATED_ACCOUNT_ID,
   partitionFor,
+  orphanPartitionDirs,
   resolveAccounts,
+  accountsFileTrusted,
   pickOrganization,
   isAuthFailure,
   hasUsageShape,
@@ -511,6 +664,10 @@ module.exports = {
   buildGauges,
   modelColor,
   summarizeGauges,
+  EXHAUSTED_PERCENT,
+  diffGaugeAlerts,
+  pickCountdown,
+  buildSummary,
   aggregateStatus,
   organizationName,
   buildTooltip,

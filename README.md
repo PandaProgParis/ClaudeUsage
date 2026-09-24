@@ -10,8 +10,8 @@
 
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshots/panel.png" alt="claude-usage: the gauges panel above the Windows tray"></td>
-    <td align="center"><img src="docs/screenshots/claude-agents.png" alt="Claude Agents: the same usage gauges in VS Code, read from claude-usage's file"></td>
+    <td align="center"><img src="docs/screenshots/panel.png" alt="Claude Usage: the gauges panel above the Windows tray"></td>
+    <td align="center"><img src="docs/screenshots/claude-agents.png" alt="Claude Agents: the same usage gauges in VS Code, read from Claude Usage's file"></td>
   </tr>
   <tr>
     <td align="center"><sub><b>Claude Usage</b> - in the tray</sub></td>
@@ -39,9 +39,9 @@ Several claude.ai accounts, a personal one and a work one for instance, are read
 
 <img src="docs/screenshots/screen-tasks-claude.png" alt="claude-agents: the gauges panel above the Windows tray">
 
-[Claude Agents](https://github.com/PandaProgParis/ClaudeAgents) is the VS Code extension that shows in live what your Claude Code sessions are doing. It can also show your plan limits at the bottom of its view, from a JSON file it never fetches itself. claude-usage writes that file.
+[Claude Agents](https://github.com/PandaProgParis/ClaudeAgents) is the VS Code extension that shows in live what your Claude Code sessions are doing. It can also show your plan limits at the bottom of its view, from a JSON file it never fetches itself. Claude Usage writes that file.
 
-Set `claudeAgents.usageFile` to the full path of claude-usage's output (by default `C:\Users\<you>\.claude-usage\usage.json`, or `/Users/<you>/.claude-usage/usage.json` on macOS - no `~`) and the gauges appear in VS Code, refreshed at every reading. Either tool also works on its own.
+Set `claudeAgents.usageFile` to the full path of Claude Usage's output (by default `C:\Users\<you>\.claude-usage\usage.json`, or `/Users/<you>/.claude-usage/usage.json` on macOS - no `~`) and the gauges appear in VS Code, refreshed at every reading. Either tool also works on its own.
 
 
 ## Install
@@ -54,7 +54,7 @@ Download from [Releases](../../releases):
 |---|---|
 | `claude-usage-<version>-setup.exe` | Windows installer. Start menu shortcut, clean uninstall. **Recommended** - a stable path means reliable start-at-login. |
 | `claude-usage-<version>-portable.exe` | Single Windows executable, no install. Put it somewhere permanent before enabling start-at-login. |
-| `claude-usage-<version>.dmg` | macOS disk image (Intel + Apple Silicon). |
+| `claude-usage-<version>-x64.dmg` · `claude-usage-<version>-arm64.dmg` | macOS disk image, Intel or Apple Silicon. |
 
 Binaries are unsigned, so Windows SmartScreen and macOS Gatekeeper will warn on first launch. On macOS: right-click the app → Open, or `xattr -dr com.apple.quarantine /Applications/claude-usage.app`.
 
@@ -127,7 +127,7 @@ The header is there with a single account too, so you can always see which accou
 
 Tick **Expand every account** in the settings to keep all the blocks open at once.
 
-Your accounts are listed in `accounts.json` next to the config, and each one gets its own isolated browser session. Deleting an account wipes that session and nothing else: the other accounts, the config and the JSON already on disk are untouched.
+Your accounts are listed in `accounts.json` next to the config, and each one gets its own isolated browser session. Deleting an account wipes that session and nothing else: the other accounts, the config and the JSON already on disk are untouched. Its folder is removed from disk at the next launch.
 
 ## Output
 
@@ -167,13 +167,13 @@ Anthropic changes this payload from time to time; the agent stores it verbatim r
 | Key | Meaning |
 |---|---|
 | `outputPath` | Where to write the JSON. A leading `~` expands to your home directory. |
-| `intervalMinutes` | How often to take a reading, for every account. Clamped to 1–1440. |
+| `intervalMinutes` | How often to take a reading, for every account. Clamped to 1-1440. |
 | `endpoint` | Optional `http(s)` URL to `POST` the payload to after each write - a dashboard, a webhook, your own API. Empty disables it. |
 | `expandAll` | Keep every account block expanded. Otherwise only the active one is. |
 
 <img src="docs/screenshots/settings.png" alt="The settings window: upload URL, interval, output file">
 
-The same settings are editable from the **Settings** window - the gear in the panel, or **Settings…** in the tray menu. It refuses an endpoint that is not an `http(s)` URL and an interval outside 1–1440 instead of silently correcting them.
+The same settings are editable from the **Settings** window - the gear in the panel, or **Settings…** in the tray menu. It refuses an endpoint that is not an `http(s)` URL and an interval outside 1-1440 instead of silently correcting them.
 
 Your accounts live next to that file, in `accounts.json`. The app manages it: there is nothing to edit there by hand.
 
@@ -185,9 +185,9 @@ The same folder holds `claude-usage.log` (truncated at 1 MB) and the Chromium pr
 
 ## How it works
 
-The usage endpoint is authenticated with a browser session, not an API key. So the agent keeps one hidden `BrowserWindow` parked on the claude.ai origin and runs the `fetch` **inside that page** - real cookies, real Chrome user agent, same-origin request. From the server's point of view it is the web app talking to its own API.
+The usage endpoint is authenticated with a browser session, not an API key. So for each reading the agent opens a hidden `BrowserWindow` on the claude.ai origin and runs the `fetch` **inside that page** - real cookies, real Chrome user agent, same-origin request. From the server's point of view it is the web app talking to its own API.
 
-Between readings that window sits on `claude.ai/robots.txt`: the origin and its cookies are all that is needed, so there is no reason to keep the whole single-page app running in the background.
+That window opens on `claude.ai/robots.txt`: the origin and its cookies are all that is needed, so the whole single-page app never loads. It is closed again once the reading is done, so between readings the agent holds no web page at all.
 
 Your credentials never leave your machine. The agent never reads them - it only borrows the session cookie jar that Chromium holds for it, in a profile of its own.
 
@@ -209,7 +209,7 @@ npm test             # unit tests (vitest)
 
 | Path | Role |
 |---|---|
-| `src/main.js` | Electron main process: accounts, one hidden window each, sync cycle, login, tray, autostart |
+| `src/main.js` | Electron main process: accounts, a hidden window per reading, sync cycle, login, tray, autostart |
 | `src/lib.js` | Pure logic - config, accounts, organization choice, payload validation, gauges, translations. No Electron, no I/O, fully tested |
 | `src/preload.js` | IPC bridge between the panel and the agent |
 | `src/panel.html` · `src/panel.js` | The gauges panel |

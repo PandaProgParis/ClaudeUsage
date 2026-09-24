@@ -57,6 +57,7 @@
     .field-check { flex-direction: row; align-items: center; gap: 8px; }
     .field-check input { width: auto; margin: 0; }
     .field-check label { font-weight: 600; }
+    .field-check label.disabled { color: #b0aca6; }
 
     .hint {
       font-size: 11px;
@@ -136,6 +137,22 @@
         <label for="expand-all" id="expand-all-label"></label>
       </div>
       <div class="hint" id="expand-all-hint"></div>
+    </div>
+
+    <div class="field">
+      <div class="field field-check">
+        <input id="notify" type="checkbox">
+        <label for="notify" id="notify-label"></label>
+      </div>
+      <div class="hint" id="notify-hint"></div>
+    </div>
+
+    <div class="field">
+      <div class="field field-check">
+        <input id="notify-sound" type="checkbox">
+        <label for="notify-sound" id="notify-sound-label"></label>
+      </div>
+      <div class="hint" id="notify-sound-hint"></div>
     </div>
 
     <div class="error" id="form-error" hidden></div>
