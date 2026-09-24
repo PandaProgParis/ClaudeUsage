@@ -35,6 +35,8 @@ Click the tray icon and you get your gauges - session, weekly, per-model - witho
 
 Several claude.ai accounts, a personal one and a work one for instance, are read side by side and switch with a click. See [Several accounts](#several-accounts).
 
+When a quota fills up, a desktop notification says which account and when it comes back, and another one says when it frees again. See [Notifications](#notifications).
+
 ## With Claude Agents
 
 <img src="docs/screenshots/screen-tasks-claude.png" alt="claude-agents: the gauges panel above the Windows tray">
@@ -115,7 +117,7 @@ A personal account and a work one, without logging out and back in every time. *
 | What you see | What it means |
 |---|---|
 | One block per account, titled with its organization name | The one with a coloured dot is the active account |
-| A collapsed block, showing its percentages on one line | Enough to see which account still has room, without expanding it |
+| A collapsed block, showing its percentages on one line | Enough to see which account still has room, without expanding it. It opens on a countdown: when the account is usable again if a quota is full (shown in red), the session reset otherwise |
 | A click on a collapsed block's header | Expands it **and** makes that account the active one |
 | The bin icon on the right of a header | Asks first, right there in place of the gauges: **Cancel** or **Delete** |
 
@@ -128,6 +130,17 @@ The header is there with a single account too, so you can always see which accou
 Tick **Expand every account** in the settings to keep all the blocks open at once.
 
 Your accounts are listed in `accounts.json` next to the config, and each one gets its own isolated browser session. Deleting an account wipes that session and nothing else: the other accounts, the config and the JSON already on disk are untouched. Its folder is removed from disk at the next launch.
+
+## Notifications
+
+A native desktop notification, for every account, the title naming which one:
+
+| When | What it says |
+|---|---|
+| A gauge reaches 100% | The gauge, and when it comes back (`Full - back in 2h14`) |
+| A full gauge drops back down | The gauge, and where it is now (`Down to 12%`) |
+
+Nothing is announced at launch: a quota that was already full when the agent started is not news. Clicking a notification opens the panel. Turn them off, or just their sound, in the settings window (`notify`, `notifySound` below).
 
 ## Output
 
@@ -160,7 +173,9 @@ Anthropic changes this payload from time to time; the agent stores it verbatim r
   "outputPath": "~/.claude-usage/usage.json",
   "intervalMinutes": 5,
   "endpoint": "",
-  "expandAll": false
+  "expandAll": false,
+  "notify": true,
+  "notifySound": true
 }
 ```
 
@@ -170,6 +185,8 @@ Anthropic changes this payload from time to time; the agent stores it verbatim r
 | `intervalMinutes` | How often to take a reading, for every account. Clamped to 1-1440. |
 | `endpoint` | Optional `http(s)` URL to `POST` the payload to after each write - a dashboard, a webhook, your own API. Empty disables it. |
 | `expandAll` | Keep every account block expanded. Otherwise only the active one is. |
+| `notify` | A desktop notification when a quota fills up, and when it frees again. |
+| `notifySound` | Play the system notification sound with it. Off, the notification stays silent. |
 
 <img src="docs/screenshots/settings.png" alt="The settings window: upload URL, interval, output file">
 
