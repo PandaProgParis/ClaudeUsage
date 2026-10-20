@@ -29,6 +29,12 @@ jobs:
             script: dist:mac
             pattern: dist/*.dmg
             artifact: macos
+          - os: ubuntu-latest
+            script: dist:linux
+            pattern: |
+              dist/*.AppImage
+              dist/*.deb
+            artifact: linux
     steps:
       - uses: actions/checkout@v4
 
@@ -91,6 +97,7 @@ jobs:
           | `claude-usage-*-setup.exe` | Windows installer - **recommended**, a stable path means reliable start-at-login |
           | `claude-usage-*-portable.exe` | Windows, no install - put it somewhere permanent before enabling start-at-login |
           | `claude-usage-*-x64.dmg` · `claude-usage-*-arm64.dmg` | macOS, Intel or Apple Silicon |
+          | `claude-usage-*-x86_64.AppImage` · `claude-usage-*-amd64.deb` | Linux x64: AppImage anywhere, deb for Debian and Ubuntu |
 
           ## These binaries are unsigned
 

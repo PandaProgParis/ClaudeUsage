@@ -85,3 +85,20 @@ mac:
 dmg:
   # Release file names stay lowercase and space-free on every platform.
   artifactName: claude-usage-${version}-${arch}.${ext}
+
+# Linux: an AppImage that runs anywhere, and a deb for Debian and Ubuntu (the
+# CloudStation machine). The tray needs a desktop that shows StatusNotifier
+# icons; the artifact watch and the readings work without one.
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  icon: src/icon.png
+  executableName: claude-usage
+  category: Development
+  maintainer: Cyril <cyril@pandaprog.com>
+  artifactName: claude-usage-${version}-${arch}.${ext}
