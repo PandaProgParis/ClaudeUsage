@@ -4,6 +4,12 @@ import {
   pickLanguage,
   createTranslator,
   resolveConfig,
+  resolveWatch,
+  claudeArgs,
+  parseFlag,
+  newJobs,
+  flagScript,
+  pickFlag,
   resolveEndpoint,
   configProblems,
   pickOrganization,
@@ -731,5 +737,163 @@ describe('resolveConfig - notifications', () => {
     expect(resolveConfig({ notify: 'yes' }, HOME).notify).toBe(true)
     const form = { endpoint: '', intervalMinutes: 5, outputPath: '~/usage.json' }
     expect(configProblems({ ...form, notify: 'nonsense' })).toEqual([])
+  })
+})
+
+describe('resolveWatch', () => {
+  const ok = {
+    url: 'https://claude.ai/artifact/6FpbD3Rm2JCqbDLSAHMvoJ',
+    flag: 'homer-attente',
+    workDir: '~/Documents/Development/homer',
+  }
+  const full = { ...ok, prompt: 'travail.md', claudeConfigDir: '', model: 'opus', effort: 'medium', allowedTools: '', env: {}, permissionMode: 'acceptEdits' }
+
+  it('fills the defaults of a well-formed watch', () => {
+    expect(resolveWatch(ok)).toEqual(full)
+  })
+
+  it('is null without an object, an artifact, a flag or a working directory', () => {
+    expect(resolveWatch(undefined)).toBeNull()
+    expect(resolveWatch({ ...ok, url: '' })).toBeNull()
+    expect(resolveWatch({ ...ok, flag: '' })).toBeNull()
+    expect(resolveWatch({ ...ok, workDir: '' })).toBeNull()
+  })
+
+  it('only watches claude.ai pages over https', () => {
+    expect(resolveWatch({ ...ok, url: 'http://claude.ai/artifact/x' })).toBeNull()
+    expect(resolveWatch({ ...ok, url: 'https://evil.example/artifact/x' })).toBeNull()
+    expect(resolveWatch({ ...ok, url: 'https://claude.ai.evil.example/x' })).toBeNull()
+    expect(resolveWatch({ ...ok, url: 'not a url' })).toBeNull()
+  })
+
+  it('refuses a flag that is not an attribute name', () => {
+    expect(resolveWatch({ ...ok, flag: 'x" onload="y' })).toBeNull()
+    expect(resolveWatch({ ...ok, flag: 'Homer-Attente' }).flag).toBe('homer-attente')
+  })
+
+  it('wants an absolute or home-relative working directory', () => {
+    expect(resolveWatch({ ...ok, workDir: 'homer' })).toBeNull()
+    expect(resolveWatch({ ...ok, workDir: '/srv/homer' }).workDir).toBe('/srv/homer')
+    expect(resolveWatch({ ...ok, workDir: 'C:\\Users\\cyril\\homer' }).workDir).toBe('C:\\Users\\cyril\\homer')
+  })
+
+  it('keeps the prompt file inside the working directory', () => {
+    expect(resolveWatch({ ...ok, prompt: '../secret.md' })).toBeNull()
+    expect(resolveWatch({ ...ok, prompt: '/etc/passwd' })).toBeNull()
+    expect(resolveWatch({ ...ok, prompt: 'consignes/homer.md' }).prompt).toBe('consignes/homer.md')
+  })
+
+  it('takes a model, an effort and a tool list as given, and drops odd ones', () => {
+    expect(resolveWatch({ ...ok, model: 'sonnet', effort: 'high', allowedTools: 'Read,Edit' })).toMatchObject({ model: 'sonnet', effort: 'high', allowedTools: 'Read,Edit' })
+    expect(resolveWatch({ ...ok, model: 'opus; rm -rf /' }).model).toBe('opus')
+    expect(resolveWatch({ ...ok, effort: 'turbo' }).effort).toBe('medium')
+  })
+
+  it('keeps string environment variables with plain names, nothing else', () => {
+    expect(resolveWatch({ ...ok, env: { CLAUDE_CODE_ENTRYPOINT: 'claude-vscode', bad: 'x', 'A=B': 'x', N: 3, OBJ: {} } }).env)
+      .toEqual({ CLAUDE_CODE_ENTRYPOINT: 'claude-vscode' })
+    expect(resolveWatch({ ...ok, env: ['x'] }).env).toEqual({})
+  })
+
+  it('takes a permission mode, but never one that skips every check', () => {
+    expect(resolveWatch({ ...ok, permissionMode: 'auto' }).permissionMode).toBe('auto')
+    expect(resolveWatch({ ...ok, permissionMode: 'bypassPermissions' }).permissionMode).toBe('acceptEdits')
+    expect(resolveWatch({ ...ok, permissionMode: 'nope' }).permissionMode).toBe('acceptEdits')
+  })
+})
+
+describe('resolveAccounts and watches', () => {
+  const watch = { url: 'https://claude.ai/artifact/x', flag: 'homer-attente', workDir: '/srv/homer' }
+
+  it('keeps a valid watch on its account, and nothing on the others', () => {
+    const resolved = resolveAccounts({ activeId: 'a', accounts: [{ id: 'a', watch }, { id: 'b', watch: { url: 'nope' } }] })
+    expect(resolved.accounts[0].watch).toEqual(resolveWatch(watch))
+    expect('watch' in resolved.accounts[1]).toBe(false)
+  })
+})
+
+describe('parseFlag', () => {
+  it('reads one job per token: thread, model, effort, stamp', () => {
+    expect(parseFlag('imvgrl4mguri|opus|high|mgz1a2 ipod-a|sonnet|low|mgz1b3')).toEqual([
+      { id: 'imvgrl4mguri', model: 'opus', effort: 'high', stamp: 'mgz1a2', token: 'imvgrl4mguri|opus|high|mgz1a2' },
+      { id: 'ipod-a', model: 'sonnet', effort: 'low', stamp: 'mgz1b3', token: 'ipod-a|sonnet|low|mgz1b3' },
+    ])
+  })
+
+  it('leaves model and effort empty when the page gives none, so the account defaults apply', () => {
+    expect(parseFlag('abc')).toEqual([{ id: 'abc', model: '', effort: '', stamp: '', token: 'abc' }])
+  })
+
+  it('drops a token with an odd model or effort instead of passing it to the CLI', () => {
+    expect(parseFlag('a|opus;rm|high|1 b|opus|turbo|2 c|fable|max|3').map(j => j.id)).toEqual(['c'])
+    expect(parseFlag('../x|opus|high|1')).toEqual([])
+  })
+
+  it('is empty for an empty or unread flag', () => {
+    expect(parseFlag('')).toEqual([])
+    expect(parseFlag(null)).toEqual([])
+  })
+})
+
+describe('newJobs', () => {
+  it('keeps the jobs not launched yet, a new stamp counting as new', () => {
+    const launched = new Set(['a|opus|high|1'])
+    expect(newJobs(launched, 'a|opus|high|1 a|opus|high|2 b|opus|low|1').map(j => j.token)).toEqual(['a|opus|high|2', 'b|opus|low|1'])
+  })
+})
+
+describe('claudeArgs', () => {
+  const watch = () => resolveWatch(watchOf({}))
+
+  it('runs one non-interactive session with the model and effort of the job', () => {
+    expect(claudeArgs(watch(), { model: 'sonnet', effort: 'low' }))
+      .toEqual(['-p', '--model', 'sonnet', '--effort', 'low', '--permission-mode', 'acceptEdits'])
+  })
+
+  it('falls back on the account defaults', () => {
+    expect(claudeArgs(watch(), { model: '', effort: '' }))
+      .toEqual(['-p', '--model', 'opus', '--effort', 'medium', '--permission-mode', 'acceptEdits'])
+  })
+
+  it('uses the permission mode of the watch', () => {
+    expect(claudeArgs(resolveWatch(watchOf({ permissionMode: 'auto' })), { model: '', effort: '' }))
+      .toEqual(['-p', '--model', 'opus', '--effort', 'medium', '--permission-mode', 'auto'])
+  })
+
+  it('passes the allowed tools when given', () => {
+    expect(claudeArgs(resolveWatch(watchOf({ allowedTools: 'Read,Bash(git:*)' })), { model: '', effort: '' }).slice(-2))
+      .toEqual(['--allowedTools', 'Read,Bash(git:*)'])
+  })
+})
+
+function watchOf(extra) {
+  return { url: 'https://claude.ai/artifact/x', flag: 'f', workDir: '/srv/w', ...extra }
+}
+
+describe('flagScript', () => {
+  it('reads the data attribute of the root element, quoted safely', () => {
+    const script = flagScript('homer-attente')
+    expect(script).toContain('"data-homer-attente"')
+    const fakeDocument = { documentElement: { getAttribute: (name) => (name === 'data-homer-attente' ? 'a b' : null) } }
+    expect(new Function('document', 'return ' + script)(fakeDocument)).toBe('a b')
+  })
+})
+
+describe('pickFlag', () => {
+  it('takes the first frame that carries the flag, even an empty one', () => {
+    expect(pickFlag([null, undefined, '', 'x'])).toBe('')
+    expect(pickFlag([null, 'a b'])).toBe('a b')
+  })
+
+  it('is null when no frame carries it', () => {
+    expect(pickFlag([null, undefined, 3])).toBeNull()
+    expect(pickFlag([])).toBeNull()
+  })
+})
+
+describe('resolveConfig claudePath', () => {
+  it('defaults to the CLI on PATH and expands a home-relative path', () => {
+    expect(resolveConfig({}, HOME).claudePath).toBe('claude')
+    expect(resolveConfig({ claudePath: '~/.local/bin/claude' }, HOME).claudePath).toBe(HOME + '/.local/bin/claude')
   })
 })

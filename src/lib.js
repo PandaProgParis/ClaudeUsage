@@ -8,6 +8,7 @@ const DEFAULT_CONFIG = {
   expandAll: false, // only the active account's block is expanded unless asked
   notify: true, // a desktop notification when a quota fills up, and when it frees again
   notifySound: true, // that notification's system sound
+  claudePath: 'claude', // the Claude Code CLI run by an account's artifact watch: a name on PATH or a full path
 }
 
 /** Expand a leading `~` to the user's home directory. */
@@ -64,6 +65,9 @@ function resolveConfig(raw, homedir) {
     // would silence a fresh install's notifications.
     notify: source.notify == null ? DEFAULT_CONFIG.notify : Boolean(source.notify),
     notifySound: source.notifySound == null ? DEFAULT_CONFIG.notifySound : Boolean(source.notifySound),
+    claudePath: typeof source.claudePath === 'string' && source.claudePath.trim()
+      ? expandHome(source.claudePath.trim(), homedir)
+      : DEFAULT_CONFIG.claudePath,
   }
 }
 
@@ -171,7 +175,11 @@ function resolveAccounts(raw) {
     const id = cleanString(entry.id)
     if (!id || seen.has(id)) continue
     seen.add(id)
-    accounts.push({ id, label: cleanString(entry.label), orgId: cleanString(entry.orgId) })
+    const account = { id, label: cleanString(entry.label), orgId: cleanString(entry.orgId) }
+    // Only a watch that can run is kept: a broken one is dropped, never half-applied.
+    const watch = resolveWatch(entry.watch)
+    if (watch) account.watch = watch
+    accounts.push(account)
   }
 
   const activeId = accounts.some(a => a.id === source.activeId)
@@ -179,6 +187,130 @@ function resolveAccounts(raw) {
     : accounts.length > 0 ? accounts[0].id : null
 
   return { activeId, accounts }
+}
+
+// --- Artifact watch ---
+//
+// An account can keep a claude.ai artifact open in a hidden window and read a
+// flag the page sets on its root element (`data-<flag>`). Each token of the
+// flag is a job: when a new one appears, the agent runs the Claude Code CLI in
+// the account's working directory, with the model and effort the page chose.
+
+const WATCH_FLAG = /^[a-z][a-z0-9-]{0,39}$/
+const MODEL_NAME = /^[a-z][a-z0-9.-]{0,39}$/
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+const JOB_ID = /^[A-Za-z0-9_-]{1,80}$/
+const JOB_STAMP = /^[a-z0-9]{0,20}$/
+const DEFAULT_WATCH = { prompt: 'travail.md', model: 'opus', effort: 'medium' }
+
+/** Only claude.ai pages, over https: the hidden window carries the account's cookies. */
+function watchUrl(value) {
+  const text = cleanString(value)
+  if (!text) return null
+  try {
+    const url = new URL(text)
+    return url.protocol === 'https:' && url.hostname === 'claude.ai' ? url.href : null
+  } catch {
+    return null
+  }
+}
+
+/** Absolute (POSIX or Windows) or home-relative: the CLI must never start in the agent's own folder. */
+function isRootedDir(value) {
+  return /^(~([\\/]|$)|\/|[A-Za-z]:[\\/]|\\\\)/.test(value)
+}
+
+/** A path relative to the working directory, that cannot climb out of it. */
+function isInnerPath(value) {
+  return !isRootedDir(value) && !value.split(/[\\/]/).some(part => part === '..')
+}
+
+/**
+ * Normalise an account's `watch` entry, or null when it cannot run: no
+ * claude.ai artifact, no flag, no rooted working directory, or a prompt file
+ * outside that directory. A bad model or effort falls back to the default
+ * rather than reaching the CLI's command line.
+ */
+function resolveWatch(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const url = watchUrl(raw.url)
+  const flag = (cleanString(raw.flag) || '').toLowerCase()
+  const workDir = cleanString(raw.workDir)
+  const prompt = cleanString(raw.prompt) || DEFAULT_WATCH.prompt
+  if (!url || !WATCH_FLAG.test(flag) || !workDir || !isRootedDir(workDir) || !isInnerPath(prompt)) return null
+  const model = cleanString(raw.model)
+  const effort = cleanString(raw.effort)
+  return {
+    url,
+    flag,
+    workDir,
+    prompt,
+    // The Claude Code account the CLI runs as: its config folder. Empty means
+    // the CLI's own default login, which may not be this claude.ai account.
+    claudeConfigDir: cleanString(raw.claudeConfigDir) || '',
+    model: model && MODEL_NAME.test(model) ? model : DEFAULT_WATCH.model,
+    effort: EFFORTS.includes(effort) ? effort : DEFAULT_WATCH.effort,
+    allowedTools: cleanString(raw.allowedTools) || '',
+    // Extra variables for the CLI, set by hand. Claude Code only offers some
+    // tools (ArtifactData) to an entrypoint it knows, CLAUDE_CODE_ENTRYPOINT.
+    env: watchEnv(raw.env),
+    // `auto` lets Claude Code's own safety check judge each action, which is
+    // what allows writes to the artifact's database; bypassPermissions, which
+    // skips every check, is refused for an agent nobody watches.
+    permissionMode: PERMISSION_MODES.includes(raw.permissionMode) ? raw.permissionMode : 'acceptEdits',
+  }
+}
+
+const PERMISSION_MODES = ['acceptEdits', 'auto', 'dontAsk', 'plan', 'manual']
+
+/** Upper-case names and string values only: anything else is dropped, never coerced. */
+function watchEnv(raw) {
+  const env = {}
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return env
+  for (const [name, value] of Object.entries(raw)) {
+    if (/^[A-Z][A-Z0-9_]{0,63}$/.test(name) && typeof value === 'string') env[name] = value
+  }
+  return env
+}
+
+/** The script run in each frame of the watched page: the flag, or null where it is absent. */
+function flagScript(flag) {
+  return '(() => document.documentElement.getAttribute(' + JSON.stringify('data-' + flag) + '))()'
+}
+
+/** The first frame that carries the flag wins, an empty flag included; null when none does. */
+function pickFlag(values) {
+  const found = (Array.isArray(values) ? values : []).find(v => typeof v === 'string')
+  return found === undefined ? null : found
+}
+
+/**
+ * The jobs a flag holds, one per space-separated token `id|model|effort|stamp`.
+ * Model and effort may be left empty for the account defaults; a token with an
+ * odd part is dropped whole, so nothing unchecked reaches the CLI.
+ */
+function parseFlag(value) {
+  if (typeof value !== 'string') return []
+  const jobs = []
+  for (const token of value.trim().split(/\s+/)) {
+    if (!token) continue
+    const [id, model = '', effort = '', stamp = ''] = token.split('|')
+    if (!JOB_ID.test(id) || (model && !MODEL_NAME.test(model)) || (effort && !EFFORTS.includes(effort)) || !JOB_STAMP.test(stamp)) continue
+    jobs.push({ id, model, effort, stamp, token })
+  }
+  return jobs
+}
+
+/** The jobs of a flag not launched yet: a thread answered again comes back with a new stamp. */
+function newJobs(launched, value) {
+  return parseFlag(value).filter(job => !launched.has(job.token))
+}
+
+/** The CLI's arguments for one job; the prompt itself goes on stdin. */
+function claudeArgs(watch, job) {
+  const args = ['-p', '--model', job.model || watch.model, '--effort', job.effort || watch.effort, '--permission-mode', watch.permissionMode || 'acceptEdits']
+  if (watch.allowedTools) args.push('--allowedTools', watch.allowedTools)
+  return args
 }
 
 /**
@@ -643,6 +775,7 @@ function createTranslator(locale) {
 }
 
 module.exports = {
+  expandHome,
   MESSAGES,
   pickLanguage,
   createTranslator,
@@ -657,6 +790,12 @@ module.exports = {
   orphanPartitionDirs,
   resolveAccounts,
   accountsFileTrusted,
+  resolveWatch,
+  flagScript,
+  pickFlag,
+  parseFlag,
+  newJobs,
+  claudeArgs,
   pickOrganization,
   isAuthFailure,
   hasUsageShape,

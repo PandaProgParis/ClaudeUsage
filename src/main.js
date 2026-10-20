@@ -49,6 +49,12 @@ const {
   aggregateStatus,
   organizationName,
   buildTooltip,
+  expandHome,
+  flagScript,
+  pickFlag,
+  newJobs,
+  parseFlag,
+  claudeArgs,
 } = require('./lib.js')
 
 // Electron names userData after productName, which is "Claude Usage" since
@@ -84,7 +90,7 @@ const LOGIN_PAGE = CLAUDE_ORIGIN + '/login'
 // Replaced on ready: app.getLocale() is only meaningful from then on.
 let t = createTranslator('en')
 let appLocale = 'en'
-let config = { outputPath: '', intervalMinutes: 5, endpoint: '', expandAll: false, notify: true, notifySound: true }
+let config = { outputPath: '', intervalMinutes: 5, endpoint: '', expandAll: false, notify: true, notifySound: true, claudePath: 'claude' }
 let panelWindow = null
 let configWindow = null
 let tray = null
@@ -218,7 +224,8 @@ function readAccountsFile() {
 
 function writeAccountsFile() {
   const text = JSON.stringify(
-    { activeId, accounts: accounts.map(a => ({ id: a.id, label: a.label, orgId: a.orgId })) },
+    // The watch is the user's own setting: carried over as read, never dropped by a rewrite.
+    { activeId, accounts: accounts.map(a => Object.assign({ id: a.id, label: a.label, orgId: a.orgId }, a.watch ? { watch: a.watch } : {})) },
     null,
     2
   )
@@ -271,6 +278,8 @@ function createAccountState(record) {
     id: record.id,
     label: record.label,
     orgId: record.orgId,
+    watch: record.watch || null,
+    watcher: null, // the artifact watch, when the account has one (see startWatch)
     window: null, // created lazily: an account is only ever read or logged into
     status: 'idle',
     message: t('noReading'),
@@ -985,6 +994,182 @@ function scheduleSync() {
   syncTimer = setInterval(() => syncAll(), config.intervalMinutes * 60 * 1000)
 }
 
+// --- Artifact watch ---
+//
+// An account with a `watch` in accounts.json keeps that claude.ai artifact open
+// in a hidden window of its own session, where the page receives its shared
+// database live. Every few seconds the flag it sets on its root element is read
+// in each frame (the artifact runs in an iframe on another origin, which the
+// main process can still reach). Each new token is a job: the Claude Code CLI
+// runs in the account's working directory, one job at a time, with the model
+// and effort the page chose. Nothing polls claude.ai's API and no model runs
+// while the flag is quiet.
+
+const WATCH_POLL_MS = 3000
+// The live connection of a page left open for days can drop silently: a fresh
+// load every hour, and sooner when the flag cannot be read at all.
+const WATCH_RELOAD_MS = 60 * 60 * 1000
+const WATCH_UNREAD_RELOAD_MS = 2 * 60 * 1000
+const JOB_TIMEOUT_MS = 60 * 60 * 1000
+
+function watchLogPath(account) {
+  return path.join(app.getPath('userData'), 'watch-' + account.id + '.log')
+}
+
+function startWatch(account) {
+  stopWatch(account)
+  if (!account.watch || account.removed || isQuitting) return
+  const watcher = { win: null, timer: null, loadedAt: 0, unreadSince: 0, reading: false, last: null, launched: new Set(), queue: [], child: null }
+  account.watcher = watcher
+
+  const win = new BrowserWindow({
+    width: 1100,
+    height: 820,
+    show: false,
+    webPreferences: {
+      session: accountSession(account.id),
+      contextIsolation: true,
+      nodeIntegration: false,
+      // Hidden for good: without this Chromium slows its timers and the page
+      // would take minutes to apply what the database pushes.
+      backgroundThrottling: false,
+    },
+  })
+  watcher.win = win
+  win.on('close', (event) => { if (!isQuitting) event.preventDefault() })
+  win.webContents.on('render-process-gone', () => {
+    if (account.watcher === watcher) setTimeout(() => loadWatch(account), 5000)
+  })
+  loadWatch(account)
+  watcher.timer = setInterval(() => readWatch(account), WATCH_POLL_MS)
+  log('watch started (' + account.id + ') - ' + account.watch.url + ' flag=' + account.watch.flag + ' dir=' + account.watch.workDir)
+}
+
+function loadWatch(account) {
+  const watcher = account.watcher
+  if (!watcher || watcher.win.isDestroyed()) return
+  watcher.loadedAt = Date.now()
+  watcher.unreadSince = 0
+  watcher.win.loadURL(account.watch.url).catch(err => log('watch load failed (' + account.id + '): ' + err.message))
+}
+
+/** Closes the page; a CLI already running finishes its job on its own. */
+function stopWatch(account) {
+  const watcher = account.watcher
+  if (!watcher) return
+  account.watcher = null
+  clearInterval(watcher.timer)
+  watcher.queue.length = 0
+  if (watcher.win && !watcher.win.isDestroyed()) watcher.win.destroy()
+}
+
+async function readWatch(account) {
+  const watcher = account.watcher
+  if (!watcher || watcher.reading || watcher.win.isDestroyed()) return
+  watcher.reading = true
+  try {
+    if (Date.now() - watcher.loadedAt > WATCH_RELOAD_MS) return loadWatch(account)
+    const script = flagScript(account.watch.flag)
+    const frames = watcher.win.webContents.mainFrame.framesInSubtree
+    const value = pickFlag(await Promise.all(frames.map(frame => frame.executeJavaScript(script).catch(() => null))))
+    if (account.watcher !== watcher) return // stopped while reading
+
+    if (value === null) {
+      // Not loaded yet, logged out, or the page lost its database: reload after a while.
+      if (!watcher.unreadSince) watcher.unreadSince = Date.now()
+      else if (Date.now() - watcher.unreadSince > WATCH_UNREAD_RELOAD_MS) {
+        log('watch: flag unread for ' + Math.round(WATCH_UNREAD_RELOAD_MS / 60000) + ' min, reloading (' + account.id + ')')
+        loadWatch(account)
+      }
+      return
+    }
+    watcher.unreadSince = 0
+    if (value !== watcher.last) {
+      watcher.last = value
+      log('watch flag (' + account.id + '): ' + (value || '(empty)'))
+    }
+    for (const job of newJobs(watcher.launched, value)) {
+      watcher.launched.add(job.token)
+      watcher.queue.push(job)
+    }
+    // A token gone from the flag never comes back as such: a thread answered
+    // again carries a new stamp. Forgetting them keeps the set small.
+    const present = new Set(parseFlag(value).map(job => job.token))
+    for (const token of watcher.launched) {
+      if (!present.has(token) && !watcher.queue.some(job => job.token === token)) watcher.launched.delete(token)
+    }
+    runNextJob(account)
+  } catch (err) {
+    log('watch read failed (' + account.id + '): ' + err.message)
+  } finally {
+    watcher.reading = false
+  }
+}
+
+/** One CLI at a time per account: two sessions on the same repository would trip over each other. */
+function runNextJob(account) {
+  const watcher = account.watcher
+  if (!watcher || watcher.child || watcher.queue.length === 0 || isQuitting) return
+  const job = watcher.queue.shift()
+  const watch = account.watch
+  const home = os.homedir()
+  const workDir = expandHome(watch.workDir, home)
+
+  let prompt
+  try {
+    prompt = fs.readFileSync(path.join(workDir, watch.prompt), 'utf8')
+  } catch (err) {
+    log('watch job skipped (' + account.id + ', ' + job.id + '): prompt unreadable - ' + err.message)
+    return runNextJob(account)
+  }
+  prompt += '\n\nFil à traiter : ' + job.id + '\n'
+
+  const env = Object.assign({}, process.env, watch.env)
+  delete env.ELECTRON_RUN_AS_NODE // the CLI is no Electron app
+  // The Claude Code account this claude.ai account works as; unset, the CLI's default login.
+  if (watch.claudeConfigDir) env.CLAUDE_CONFIG_DIR = expandHome(watch.claudeConfigDir, home)
+
+  const args = claudeArgs(watch, job)
+  let out
+  try {
+    out = fs.openSync(watchLogPath(account), 'a')
+    fs.writeSync(out, '\n[' + new Date().toISOString() + '] ' + job.token + ' - ' + config.claudePath + ' ' + args.join(' ') + '\n')
+  } catch (err) {
+    log('watch job skipped (' + account.id + ', ' + job.id + '): log unwritable - ' + err.message)
+    return
+  }
+
+  let child
+  try {
+    child = require('child_process').spawn(config.claudePath, args, { cwd: workDir, env, stdio: ['pipe', out, out], windowsHide: true })
+  } catch (err) {
+    fs.closeSync(out)
+    log('watch job failed to start (' + account.id + ', ' + job.id + '): ' + err.message)
+    return
+  }
+  watcher.child = child
+  log('watch job started (' + account.id + ') - ' + job.token)
+  const timer = setTimeout(() => {
+    log('watch job over time, stopped (' + account.id + ', ' + job.id + ')')
+    child.kill()
+  }, JOB_TIMEOUT_MS)
+
+  let done = false
+  const finish = (how) => {
+    if (done) return
+    done = true
+    clearTimeout(timer)
+    try { fs.closeSync(out) } catch {}
+    log('watch job ended (' + account.id + ', ' + job.id + '): ' + how)
+    watcher.child = null
+    if (account.watcher === watcher) runNextJob(account)
+  }
+  child.on('error', err => finish('error - ' + err.message))
+  child.on('close', code => finish('code ' + code))
+  child.stdin.on('error', () => {}) // a CLI that fails at once closes stdin under us
+  child.stdin.end(prompt)
+}
+
 // --- Login flow ---
 
 function startLogin(account, reason) {
@@ -1135,6 +1320,7 @@ async function removeAccount(id) {
   // rebuild a window on the partition about to be wiped.
   account.removed = true
   cancelLogin(account)
+  stopWatch(account)
   abandonReading(account)
   accounts = accounts.filter(a => a.id !== id)
   if (activeId === id) {
@@ -1559,7 +1745,7 @@ function closeConfigWindow() {
 function quit() {
   isQuitting = true
   if (syncTimer) clearInterval(syncTimer)
-  for (const account of accounts) cancelLogin(account)
+  for (const account of accounts) { cancelLogin(account); stopWatch(account) }
   clearTimeout(panelIdleTimer)
   clearTimeout(panelRevealTimer)
   clearTimeout(configReloadTimer)
@@ -1661,5 +1847,6 @@ if (!app.requestSingleInstanceLock()) {
     syncAll()
     scheduleSync()
     watchConfig()
+    for (const account of accounts) startWatch(account)
   })
 }
